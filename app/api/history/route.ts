@@ -14,8 +14,10 @@ const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
 /**
  * POST /api/history
  *
- * Marks an episode as watched in the user's Trakt history.
- * Expects a JSON body with { episodeId: number }
+ * Marks watched in the user's Trakt history. Body shapes:
+ *   { episodeId: number }                    — one episode
+ *   { showId: number, season: number }       — entire season of a show
+ *   { showId: number }                       — entire show (every aired episode)
  */
 export async function POST(req: Request) {
   const cookieStore = await cookies();
@@ -49,19 +51,26 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { episodeId } = await req.json();
+    const { episodeId, showId, season } = await req.json();
 
-    if (!episodeId) {
-      return NextResponse.json({ error: "episodeId is required" }, { status: 400 });
+    let payload: Record<string, unknown>;
+
+    if (episodeId) {
+      payload = { episodes: [{ ids: { trakt: episodeId } }] };
+    } else if (showId && typeof season === "number") {
+      payload = {
+        shows: [
+          { ids: { trakt: showId }, seasons: [{ number: season }] },
+        ],
+      };
+    } else if (showId) {
+      payload = { shows: [{ ids: { trakt: showId } }] };
+    } else {
+      return NextResponse.json(
+        { error: "episodeId or showId is required" },
+        { status: 400 }
+      );
     }
-
-    const payload = {
-      episodes: [
-        {
-          ids: { trakt: episodeId }
-        }
-      ]
-    };
 
     const res = await fetch(`${TRAKT_API_BASE}/sync/history`, {
       method: "POST",
@@ -79,7 +88,7 @@ export async function POST(req: Request) {
       const text = await res.text();
       console.error(`Sync history failed (${res.status}):`, text);
       return NextResponse.json(
-        { error: "Failed to mark episode as watched" },
+        { error: "Failed to mark as watched" },
         { status: res.status }
       );
     }
@@ -89,7 +98,7 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("Sync history error:", error);
     return NextResponse.json(
-      { error: "Failed to mark episode as watched" },
+      { error: "Failed to mark as watched" },
       { status: 500 }
     );
   }

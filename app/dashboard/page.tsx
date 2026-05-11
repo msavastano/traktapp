@@ -3,8 +3,15 @@
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import type { TrackedShow } from "@/lib/types";
 import { SearchShows } from "@/components/search-shows";
+import { WatchedMenu } from "@/components/watched-menu";
+
+const posterUrl = (s: TrackedShow): string | null => {
+  const p = s.show.images?.poster?.[0];
+  return p ? `https://${p.replace(/^https?:\/\//, "")}` : null;
+};
 
 interface WatchlistResponse {
   shows: TrackedShow[];
@@ -24,6 +31,7 @@ export default function Dashboard() {
   const [watchlistLoading, setWatchlistLoading] = useState(true);
   const [showRaw, setShowRaw] = useState<number | null>(null);
   const [markingIds, setMarkingIds] = useState<Record<number, boolean>>({});
+  const [bulkMarking, setBulkMarking] = useState<Record<number, boolean>>({});
   const [activeTab, setActiveTab] = useState<"tracking" | "watchlist">("tracking");
   const [filter, setFilter] = useState<"all" | "upcoming" | "waiting" | "behind" | "completed">("all");
 
@@ -57,6 +65,29 @@ export default function Dashboard() {
       console.error(err);
     } finally {
       setMarkingIds((prev) => ({ ...prev, [episodeId]: false }));
+    }
+  };
+
+  const handleMarkBulk = async (
+    showId: number,
+    body: { showId: number; season?: number }
+  ) => {
+    setBulkMarking((prev) => ({ ...prev, [showId]: true }));
+    try {
+      const res = await fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        fetchWatchlist();
+      } else {
+        console.error("Failed to mark bulk watched");
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBulkMarking((prev) => ({ ...prev, [showId]: false }));
     }
   };
 
@@ -279,6 +310,21 @@ export default function Dashboard() {
                     className="watchlist-card"
                     style={{ animationDelay: `${index * 0.05}s` }}
                   >
+                    <div className="watchlist-card-poster">
+                      {posterUrl(tracked) ? (
+                        <Image
+                          src={posterUrl(tracked)!}
+                          alt={`${show.title} poster`}
+                          width={120}
+                          height={180}
+                          sizes="(max-width: 768px) 96px, 120px"
+                        />
+                      ) : (
+                        <div className="poster-placeholder" aria-hidden>📺</div>
+                      )}
+                    </div>
+
+                    <div className="watchlist-card-body">
                     <div className="watchlist-card-header">
                       <div className="watchlist-card-title-row">
                         <h3 className="watchlist-card-title">
@@ -363,13 +409,29 @@ export default function Dashboard() {
                               </span>
                             )}
                             {progress.nextEpisode.isAired && (
-                              <button
-                                className="mark-watched-btn"
-                                disabled={markingIds[progress.nextEpisode.id]}
-                                onClick={() => handleMarkWatched(progress.nextEpisode!.id)}
-                              >
-                                {markingIds[progress.nextEpisode.id] ? "..." : "Mark Watched ✓"}
-                              </button>
+                              <span className="mark-watched-group">
+                                <button
+                                  className="mark-watched-btn"
+                                  disabled={markingIds[progress.nextEpisode.id] || bulkMarking[ids.trakt]}
+                                  onClick={() => handleMarkWatched(progress.nextEpisode!.id)}
+                                >
+                                  {markingIds[progress.nextEpisode.id] ? "..." : "Mark Watched ✓"}
+                                </button>
+                                <WatchedMenu
+                                  showTitle={show.title}
+                                  seasonNumber={progress.nextEpisode.season}
+                                  busy={bulkMarking[ids.trakt]}
+                                  onMarkSeason={() =>
+                                    handleMarkBulk(ids.trakt, {
+                                      showId: ids.trakt,
+                                      season: progress.nextEpisode!.season,
+                                    })
+                                  }
+                                  onMarkShow={() =>
+                                    handleMarkBulk(ids.trakt, { showId: ids.trakt })
+                                  }
+                                />
+                              </span>
                             )}
                           </span>
                         </div>
@@ -407,6 +469,7 @@ export default function Dashboard() {
                         {JSON.stringify(tracked, null, 2)}
                       </pre>
                     )}
+                    </div>
                   </div>
                 );
               })}

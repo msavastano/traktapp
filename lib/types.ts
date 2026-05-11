@@ -36,6 +36,16 @@ export interface TraktShow {
   country?: string;
   trailer?: string | null;
   certification?: string;
+  images?: TraktImages;
+}
+
+export interface TraktImages {
+  poster?: string[];
+  fanart?: string[];
+  banner?: string[];
+  thumb?: string[];
+  logo?: string[];
+  clearart?: string[];
 }
 
 export interface TraktEpisode {
@@ -80,18 +90,6 @@ export interface TraktWatchlistItem {
   listed_at: string;
   type: string;
   show: TraktShow;
-}
-
-export interface TraktShowStats {
-  watchers: number;
-  plays: number;
-  collectors: number;
-  collected_episodes: number;
-  comments: number;
-  lists: number;
-  votes: number;
-  favorited: number;
-  recommended: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,9 +168,6 @@ export interface TrackedShow {
     /** The show's next globally upcoming episode (from /shows/{id}/next_episode) */
     upcomingEpisode: NextEpisodeInfo | null;
   };
-
-  // --- Show stats (from /shows/{id}/stats) ---
-  stats: TraktShowStats | null;
 
   // --- Computed status ---
   trackingStatus: TrackingStatus;

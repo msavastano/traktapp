@@ -11,7 +11,6 @@ import type {
   TraktWatchlistItem,
   TraktWatchedProgress,
   TraktEpisode,
-  TraktShowStats,
   TrackedShow,
   TrackingStatus,
   SeasonSummary,
@@ -68,21 +67,6 @@ async function fetchNextEpisode(
       { headers: apiHeaders(accessToken) }
     );
     if (!res.ok || res.status === 204) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchShowStats(
-  slug: string,
-  accessToken: string
-): Promise<TraktShowStats | null> {
-  try {
-    const res = await fetch(`${TRAKT_API_BASE}/shows/${slug}/stats`, {
-      headers: apiHeaders(accessToken),
-    });
-    if (!res.ok) return null;
     return await res.json();
   } catch {
     return null;
@@ -170,11 +154,10 @@ export async function enrichWatchlistItem(
 ): Promise<TrackedShow> {
   const slug = item.show.ids.slug;
 
-  // Fetch progress, upcoming episode, and stats in parallel
-  const [progress, upcomingEpisode, stats] = await Promise.all([
+  // Fetch progress and upcoming episode in parallel
+  const [progress, upcomingEpisode] = await Promise.all([
     fetchProgress(slug, accessToken),
     fetchNextEpisode(slug, accessToken),
-    fetchShowStats(slug, accessToken),
   ]);
 
   const aired = progress?.aired ?? 0;
@@ -215,7 +198,6 @@ export async function enrichWatchlistItem(
       nextEpisode: toNextEpisodeInfo(progress?.next_episode ?? null),
       upcomingEpisode: toNextEpisodeInfo(upcomingEpisode),
     },
-    stats,
     trackingStatus: status,
     statusLabel: label,
   };
@@ -231,13 +213,20 @@ export async function enrichWatchlist(
 ): Promise<TrackedShow[]> {
   const results: TrackedShow[] = [];
 
-  // Process in batches to avoid overwhelming the API
+  // Process in batches to avoid overwhelming the API.
+  // allSettled so one show's failure doesn't reject the whole batch.
   for (let i = 0; i < items.length; i += concurrency) {
     const batch = items.slice(i, i + concurrency);
-    const enriched = await Promise.all(
+    const settled = await Promise.allSettled(
       batch.map((item) => enrichWatchlistItem(item, accessToken))
     );
-    results.push(...enriched);
+    for (const r of settled) {
+      if (r.status === "fulfilled") {
+        results.push(r.value);
+      } else {
+        console.error("enrichWatchlistItem failed:", r.reason);
+      }
+    }
   }
 
   return results;

@@ -64,11 +64,11 @@ export async function GET() {
     // Step 1: Fetch the raw watchlist AND watched shows with extended info
     const [watchlistRes, watchedRes] = await Promise.all([
       fetch(
-        `${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full`,
+        `${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full,images`,
         { headers }
       ),
       fetch(
-        `${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full`,
+        `${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full,images`,
         { headers }
       )
     ]);
