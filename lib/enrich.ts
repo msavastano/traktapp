@@ -130,9 +130,14 @@ function computeTrackingStatus(
     };
   }
 
-  // Ongoing show + caught up — check for upcoming episodes
-  if (upcomingEpisode?.first_aired) {
-    const airDate = new Date(upcomingEpisode.first_aired);
+  // Ongoing show + caught up — check for upcoming episode.
+  // Trakt's standalone /next_episode endpoint is CDN-cached per region and
+  // sometimes returns empty when progress.next_episode has the same data.
+  // Use progress.next_episode as fallback for stable cross-environment results.
+  const upcomingAirDate =
+    upcomingEpisode?.first_aired ?? progress?.next_episode?.first_aired ?? null;
+  if (upcomingAirDate) {
+    const airDate = new Date(upcomingAirDate);
     if (airDate > new Date()) {
       const formatted = airDate.toLocaleDateString("en-US", {
         month: "short",
@@ -200,7 +205,9 @@ export async function enrichWatchlistItem(
       lastWatchedAt: progress?.last_watched_at ?? null,
       lastEpisode: toNextEpisodeInfo(progress?.last_episode ?? null),
       nextEpisode: toNextEpisodeInfo(progress?.next_episode ?? null),
-      upcomingEpisode: toNextEpisodeInfo(upcomingEpisode),
+      upcomingEpisode: toNextEpisodeInfo(
+        upcomingEpisode ?? progress?.next_episode ?? null
+      ),
     },
     trackingStatus: status,
     statusLabel: label,
