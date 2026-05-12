@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npm run *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(claude mcp *)",
+      "PowerShell(if \\($env:TRAKT_CLIENT_ID\\) { \"TRAKT_CLIENT_ID set: $\\($env:TRAKT_CLIENT_ID.Length\\) chars\" } else { \"TRAKT_CLIENT_ID MISSING\" }; if \\($env:TRAKT_CLIENT_SECRET\\) { \"TRAKT_CLIENT_SECRET set\" } else { \"TRAKT_CLIENT_SECRET MISSING\" })",
+      "Bash(npm install *)"
     ]
   }
 }

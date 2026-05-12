@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "trakt": {
+      "type": "stdio",
+      "command": "C:/Users/millh/Local Documents/dev/traktapp/trakt_mcpserver/.venv/Scripts/python.exe",
+      "args": [
+        "C:/Users/millh/Local Documents/dev/traktapp/trakt_mcpserver/server.py"
+      ],
+      "env": {
+        "TRAKT_CLIENT_ID": "${TRAKT_CLIENT_ID}",
+        "TRAKT_CLIENT_SECRET": "${TRAKT_CLIENT_SECRET}"
+      }
+    }
+  }
+}

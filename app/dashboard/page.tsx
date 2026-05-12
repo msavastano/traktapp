@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { TrackedShow } from "@/lib/types";
 import { SearchShows } from "@/components/search-shows";
 import { WatchedMenu } from "@/components/watched-menu";
@@ -196,6 +197,11 @@ export default function Dashboard() {
               ? "Loading your watchlist…"
               : `${shows.length} total shows`}
           </p>
+          <div style={{ marginTop: "1rem" }}>
+            <Link href="/recommendations" className="mark-watched-btn">
+              ✨ AI Recommendations
+            </Link>
+          </div>
         </div>
 
         <SearchShows existingIds={existingShowIds} onAdded={fetchWatchlist} />
