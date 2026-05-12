@@ -41,18 +41,15 @@ async function fetchProgress(
   try {
     const res = await fetch(
       `${TRAKT_API_BASE}/shows/${slug}/progress/watched?hidden=false&specials=false&count_specials=false`,
-      { headers: apiHeaders(accessToken) }
+      { headers: apiHeaders(accessToken), cache: "no-store" }
     );
     if (!res.ok) {
-      console.log(`fetchProgress for ${slug} failed with status: ${res.status}`);
+      console.warn(`fetchProgress ${slug} -> ${res.status}`);
       return null;
     }
-    const data = await res.json();
-    if (slug === 'friends' || slug === 'stranger-things') {
-      console.log(`fetchProgress for ${slug} data:`, data.aired, data.completed);
-    }
-    return data;
-  } catch {
+    return await res.json();
+  } catch (err) {
+    console.warn(`fetchProgress ${slug} threw:`, err);
     return null;
   }
 }
@@ -64,11 +61,18 @@ async function fetchNextEpisode(
   try {
     const res = await fetch(
       `${TRAKT_API_BASE}/shows/${slug}/next_episode?extended=full`,
-      { headers: apiHeaders(accessToken) }
+      { headers: apiHeaders(accessToken), cache: "no-store" }
     );
-    if (!res.ok || res.status === 204) return null;
-    return await res.json();
-  } catch {
+    if (res.status === 204) return null;
+    if (!res.ok) {
+      console.warn(`fetchNextEpisode ${slug} -> ${res.status}`);
+      return null;
+    }
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text) as TraktEpisode;
+  } catch (err) {
+    console.warn(`fetchNextEpisode ${slug} threw:`, err);
     return null;
   }
 }
