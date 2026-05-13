@@ -1260,6 +1260,24 @@ select {
 }
 
 /* ------------------------------------------------------------------ */
+/* Season remaining indicator                                          */
+/* ------------------------------------------------------------------ */
+
+.season-remaining {
+  font-size: 13px;
+  color: var(--sage-green, #6f8a6f);
+  margin-bottom: var(--space-4, 12px);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md, 8px);
+  background: rgba(61, 92, 62, 0.10);
+  border: 1px solid rgba(61, 92, 62, 0.25);
+  width: fit-content;
+}
+
+/* ------------------------------------------------------------------ */
 /* Confirm dialog                                                      */
 /* ------------------------------------------------------------------ */
 

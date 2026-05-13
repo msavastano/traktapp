@@ -509,6 +509,15 @@ function DashboardInner() {
                       </span>
                     </div>
 
+                    {progress.upcomingInSeason && (
+                      <div className="season-remaining">
+                        📅 {progress.upcomingInSeason.remaining} episode
+                        {progress.upcomingInSeason.remaining !== 1 ? "s" : ""}
+                        {" "}left to air in Season {progress.upcomingInSeason.season}
+                      </div>
+                    )}
+
+
                     {/* Key info */}
                     <div className="watchlist-card-meta">
                       {show.status && (

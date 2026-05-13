@@ -167,6 +167,11 @@ export interface TrackedShow {
 
     /** The show's next globally upcoming episode (from /shows/{id}/next_episode) */
     upcomingEpisode: NextEpisodeInfo | null;
+
+    /** Currently-airing season info: the most recent season where more
+     * episodes are scheduled but not yet aired. Null if every season is
+     * fully aired or no upcoming episodes are known. */
+    upcomingInSeason: { season: number; remaining: number } | null;
   };
 
   // --- Computed status ---

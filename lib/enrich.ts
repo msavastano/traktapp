@@ -2,8 +2,10 @@
  * Enrichment logic: takes raw watchlist items from Trakt and enriches
  * each with watch progress + computed tracking status.
  *
- * One API call per show: GET /shows/{slug}/progress/watched
- * (its embedded next_episode field supplies upcoming-episode data).
+ * Two API calls per show (parallel):
+ *   GET /shows/{slug}/progress/watched
+ *   GET /shows/{slug}/seasons?extended=full  (for episode_count per season,
+ *     so we can compute episodes-remaining-in-current-season)
  */
 
 import type {
@@ -27,6 +29,33 @@ function apiHeaders(accessToken: string): Record<string, string> {
     "trakt-api-version": "2",
     Authorization: `Bearer ${accessToken}`,
   };
+}
+
+interface TraktSeasonInfo {
+  number: number;
+  episode_count: number;
+  aired_episodes: number;
+  first_aired?: string | null;
+}
+
+async function fetchSeasons(
+  slug: string,
+  accessToken: string
+): Promise<TraktSeasonInfo[] | null> {
+  try {
+    const res = await fetch(
+      `${TRAKT_API_BASE}/shows/${slug}/seasons?extended=full`,
+      { headers: apiHeaders(accessToken), cache: "no-store" }
+    );
+    if (!res.ok) {
+      console.warn(`fetchSeasons ${slug} -> ${res.status}`);
+      return null;
+    }
+    return await res.json();
+  } catch (err) {
+    console.warn(`fetchSeasons ${slug} threw:`, err);
+    return null;
+  }
 }
 
 async function fetchProgress(
@@ -120,7 +149,10 @@ export async function enrichWatchlistItem(
   accessToken: string
 ): Promise<TrackedShow> {
   const slug = item.show.ids.slug;
-  const progress = await fetchProgress(slug, accessToken);
+  const [progress, seasonsRaw] = await Promise.all([
+    fetchProgress(slug, accessToken),
+    fetchSeasons(slug, accessToken),
+  ]);
 
   const aired = progress?.aired ?? 0;
   const completed = progress?.completed ?? 0;
@@ -135,8 +167,36 @@ export async function enrichWatchlistItem(
       isFullyWatched: s.completed >= s.aired,
     }));
 
+  // Find the currently-releasing season: a season that has started airing
+  // (aired_episodes > 0) but isn't fully aired yet. Skips seasons that
+  // haven't begun (aired_episodes === 0 — entire season is "left", which is
+  // not useful info) and fully-aired seasons. Excludes specials.
+  let upcomingInSeason: { season: number; remaining: number } | null = null;
+  if (seasonsRaw) {
+    const partial = seasonsRaw
+      .filter(
+        (s) =>
+          s.number > 0 &&
+          s.episode_count > 0 &&
+          s.aired_episodes > 0 &&
+          s.aired_episodes < s.episode_count
+      )
+      .sort((a, b) => b.number - a.number);
+    const target = partial[0];
+    if (target) {
+      upcomingInSeason = {
+        season: target.number,
+        remaining: target.episode_count - target.aired_episodes,
+      };
+    }
+  }
+
   const { status, label } = computeTrackingStatus(item.show, progress);
-  const nextEp = progress?.next_episode ?? null;
+  // Trakt sometimes returns placeholder next-episode entries for future
+  // seasons (no first_aired, title like "Episode #2.1"). Drop them — they're
+  // not real scheduled episodes and shouldn't appear as "Next to watch".
+  const rawNext = progress?.next_episode ?? null;
+  const nextEp = rawNext && rawNext.first_aired ? rawNext : null;
 
   return {
     listedAt: item.listed_at,
@@ -155,6 +215,7 @@ export async function enrichWatchlistItem(
       lastEpisode: toNextEpisodeInfo(progress?.last_episode ?? null),
       nextEpisode: toNextEpisodeInfo(nextEp),
       upcomingEpisode: toNextEpisodeInfo(nextEp),
+      upcomingInSeason,
     },
     trackingStatus: status,
     statusLabel: label,
