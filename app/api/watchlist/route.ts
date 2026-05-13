@@ -8,6 +8,18 @@ import {
   COOKIE_NAME,
 } from "@/lib/trakt";
 import { enrichWatchlist } from "@/lib/enrich";
+import { cacheGet, cacheSet, cacheDelete, watchlistKey } from "@/lib/cache";
+import type { TrackedShow } from "@/lib/types";
+
+interface WatchlistPayload {
+  shows: TrackedShow[];
+  pagination: {
+    page: string | null;
+    limit: string | null;
+    pageCount: string | null;
+    itemCount: string;
+  };
+}
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
 const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
@@ -53,6 +65,12 @@ export async function GET() {
   }
 
   try {
+    const cacheKey = watchlistKey(tokens.access_token);
+    const cached = cacheGet<WatchlistPayload>(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached, { headers: { "x-cache": "HIT" } });
+    }
+
     const headers = {
       "Content-Type": "application/json",
       "User-Agent": USER_AGENT,
@@ -124,15 +142,18 @@ export async function GET() {
     // Step 2: Enrich each show with progress + tracking status
     const enriched = await enrichWatchlist(combinedList, tokens.access_token);
 
-    return NextResponse.json({
+    const payload: WatchlistPayload = {
       shows: enriched,
       pagination: {
         page: watchlistRes.headers.get("x-pagination-page"),
         limit: watchlistRes.headers.get("x-pagination-limit"),
         pageCount: watchlistRes.headers.get("x-pagination-page-count"),
-        itemCount: String(combinedList.length), // Combined length
+        itemCount: String(combinedList.length),
       },
-    });
+    };
+    cacheSet(cacheKey, payload);
+
+    return NextResponse.json(payload, { headers: { "x-cache": "MISS" } });
   } catch (error) {
     console.error("Watchlist fetch error:", error);
     return NextResponse.json(
@@ -208,6 +229,7 @@ export async function POST(req: Request) {
     }
 
     const data = await res.json();
+    cacheDelete(watchlistKey(tokens.access_token));
     return NextResponse.json(data);
   } catch (error) {
     console.error("Add to watchlist error:", error);

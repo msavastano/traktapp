@@ -6,7 +6,9 @@
       "Bash(claude mcp *)",
       "PowerShell(if \\($env:TRAKT_CLIENT_ID\\) { \"TRAKT_CLIENT_ID set: $\\($env:TRAKT_CLIENT_ID.Length\\) chars\" } else { \"TRAKT_CLIENT_ID MISSING\" }; if \\($env:TRAKT_CLIENT_SECRET\\) { \"TRAKT_CLIENT_SECRET set\" } else { \"TRAKT_CLIENT_SECRET MISSING\" })",
       "Bash(npm install *)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(grep -E -A2 \"\\(watchlist\\\\\\\\\\\\\\\\route|dashboard\\\\\\\\\\\\\\\\page\\)\")",
+      "Bash(git stash *)"
     ]
   }
 }

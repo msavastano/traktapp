@@ -2,9 +2,8 @@
  * Enrichment logic: takes raw watchlist items from Trakt and enriches
  * each with watch progress + computed tracking status.
  *
- * For each show, makes two additional API calls:
- *   1. GET /shows/{slug}/progress/watched  — user's per-episode progress
- *   2. GET /shows/{slug}/next_episode?extended=full — globally upcoming episode
+ * One API call per show: GET /shows/{slug}/progress/watched
+ * (its embedded next_episode field supplies upcoming-episode data).
  */
 
 import type {
@@ -30,10 +29,6 @@ function apiHeaders(accessToken: string): Record<string, string> {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Fetch helpers
-// ---------------------------------------------------------------------------
-
 async function fetchProgress(
   slug: string,
   accessToken: string
@@ -54,33 +49,6 @@ async function fetchProgress(
   }
 }
 
-async function fetchNextEpisode(
-  slug: string,
-  accessToken: string
-): Promise<TraktEpisode | null> {
-  try {
-    const res = await fetch(
-      `${TRAKT_API_BASE}/shows/${slug}/next_episode?extended=full`,
-      { headers: apiHeaders(accessToken), cache: "no-store" }
-    );
-    if (res.status === 204) return null;
-    if (!res.ok) {
-      console.warn(`fetchNextEpisode ${slug} -> ${res.status}`);
-      return null;
-    }
-    const text = await res.text();
-    if (!text) return null;
-    return JSON.parse(text) as TraktEpisode;
-  } catch (err) {
-    console.warn(`fetchNextEpisode ${slug} threw:`, err);
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Enrichment
-// ---------------------------------------------------------------------------
-
 function toNextEpisodeInfo(ep: TraktEpisode | null): NextEpisodeInfo | null {
   if (!ep) return null;
   const firstAired = ep.first_aired ?? null;
@@ -96,15 +64,13 @@ function toNextEpisodeInfo(ep: TraktEpisode | null): NextEpisodeInfo | null {
 
 function computeTrackingStatus(
   show: TraktWatchlistItem["show"],
-  progress: TraktWatchedProgress | null,
-  upcomingEpisode: TraktEpisode | null
+  progress: TraktWatchedProgress | null
 ): { status: TrackingStatus; label: string } {
   const showEnded =
     show.status === "ended" || show.status === "canceled";
   const aired = progress?.aired ?? 0;
   const completed = progress?.completed ?? 0;
 
-  // Never watched
   if (completed === 0) {
     return {
       status: "not_started",
@@ -114,7 +80,6 @@ function computeTrackingStatus(
 
   const caughtUp = completed >= aired;
 
-  // Finished show + caught up
   if (showEnded && caughtUp) {
     return {
       status: "completed",
@@ -122,7 +87,6 @@ function computeTrackingStatus(
     };
   }
 
-  // NOT caught up (whether show is ended or ongoing)
   if (!caughtUp) {
     return {
       status: "behind",
@@ -130,12 +94,7 @@ function computeTrackingStatus(
     };
   }
 
-  // Ongoing show + caught up — check for upcoming episode.
-  // Trakt's standalone /next_episode endpoint is CDN-cached per region and
-  // sometimes returns empty when progress.next_episode has the same data.
-  // Use progress.next_episode as fallback for stable cross-environment results.
-  const upcomingAirDate =
-    upcomingEpisode?.first_aired ?? progress?.next_episode?.first_aired ?? null;
+  const upcomingAirDate = progress?.next_episode?.first_aired ?? null;
   if (upcomingAirDate) {
     const airDate = new Date(upcomingAirDate);
     if (airDate > new Date()) {
@@ -150,7 +109,6 @@ function computeTrackingStatus(
     }
   }
 
-  // Caught up but no known upcoming episode
   return {
     status: "waiting_new_season",
     label: "Caught up · Waiting for new season",
@@ -162,18 +120,12 @@ export async function enrichWatchlistItem(
   accessToken: string
 ): Promise<TrackedShow> {
   const slug = item.show.ids.slug;
-
-  // Fetch progress and upcoming episode in parallel
-  const [progress, upcomingEpisode] = await Promise.all([
-    fetchProgress(slug, accessToken),
-    fetchNextEpisode(slug, accessToken),
-  ]);
+  const progress = await fetchProgress(slug, accessToken);
 
   const aired = progress?.aired ?? 0;
   const completed = progress?.completed ?? 0;
   const unwatchedCount = Math.max(0, aired - completed);
 
-  // Build per-season summaries (exclude specials — season 0)
   const seasons: SeasonSummary[] = (progress?.seasons ?? [])
     .filter((s) => s.number > 0)
     .map((s) => ({
@@ -183,11 +135,8 @@ export async function enrichWatchlistItem(
       isFullyWatched: s.completed >= s.aired,
     }));
 
-  const { status, label } = computeTrackingStatus(
-    item.show,
-    progress,
-    upcomingEpisode
-  );
+  const { status, label } = computeTrackingStatus(item.show, progress);
+  const nextEp = progress?.next_episode ?? null;
 
   return {
     listedAt: item.listed_at,
@@ -204,28 +153,21 @@ export async function enrichWatchlistItem(
 
       lastWatchedAt: progress?.last_watched_at ?? null,
       lastEpisode: toNextEpisodeInfo(progress?.last_episode ?? null),
-      nextEpisode: toNextEpisodeInfo(progress?.next_episode ?? null),
-      upcomingEpisode: toNextEpisodeInfo(
-        upcomingEpisode ?? progress?.next_episode ?? null
-      ),
+      nextEpisode: toNextEpisodeInfo(nextEp),
+      upcomingEpisode: toNextEpisodeInfo(nextEp),
     },
     trackingStatus: status,
     statusLabel: label,
   };
 }
 
-/**
- * Enriches an entire watchlist in parallel (with concurrency limit).
- */
 export async function enrichWatchlist(
   items: TraktWatchlistItem[],
   accessToken: string,
-  concurrency = 5
+  concurrency = 8
 ): Promise<TrackedShow[]> {
   const results: TrackedShow[] = [];
 
-  // Process in batches to avoid overwhelming the API.
-  // allSettled so one show's failure doesn't reject the whole batch.
   for (let i = 0; i < items.length; i += concurrency) {
     const batch = items.slice(i, i + concurrency);
     const settled = await Promise.allSettled(

@@ -7,6 +7,7 @@ import {
   encodeTokens,
   COOKIE_NAME,
 } from "@/lib/trakt";
+import { cacheDelete, watchlistKey } from "@/lib/cache";
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
 const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
@@ -94,6 +95,7 @@ export async function POST(req: Request) {
     }
 
     const data = await res.json();
+    cacheDelete(watchlistKey(tokens.access_token));
     return NextResponse.json(data);
   } catch (error) {
     console.error("Sync history error:", error);

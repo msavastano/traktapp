@@ -1,8 +1,8 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import type { TrackedShow } from "@/lib/types";
@@ -24,20 +24,81 @@ interface WatchlistResponse {
   };
 }
 
+type Tab = "tracking" | "watchlist";
+type Filter = "all" | "upcoming" | "waiting" | "behind" | "completed";
+
+const VALID_TABS: Tab[] = ["tracking", "watchlist"];
+const VALID_FILTERS: Filter[] = ["all", "upcoming", "waiting", "behind", "completed"];
+
+const RAW_STORAGE_KEY = "dashboard.showRaw";
+
 export default function Dashboard() {
+  return (
+    <Suspense
+      fallback={
+        <div className="loading-screen">
+          <div className="loading-spinner" />
+          <p className="loading-text">Loading dashboard…</p>
+        </div>
+      }
+    >
+      <DashboardInner />
+    </Suspense>
+  );
+}
+
+function DashboardInner() {
   const { user, isLoading, isAuthenticated } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const initialTab: Tab = (() => {
+    const v = searchParams.get("tab");
+    return VALID_TABS.includes(v as Tab) ? (v as Tab) : "tracking";
+  })();
+  const initialFilter: Filter = (() => {
+    const v = searchParams.get("filter");
+    return VALID_FILTERS.includes(v as Filter) ? (v as Filter) : "all";
+  })();
+
   const [shows, setShows] = useState<TrackedShow[]>([]);
-  const [pagination, setPagination] = useState<WatchlistResponse["pagination"] | null>(null);
+  const [, setPagination] = useState<WatchlistResponse["pagination"] | null>(null);
   const [watchlistLoading, setWatchlistLoading] = useState(true);
+  // Keyed by trakt show id so it survives sort/filter changes.
   const [showRaw, setShowRaw] = useState<number | null>(null);
   const [markingIds, setMarkingIds] = useState<Record<number, boolean>>({});
   const [bulkMarking, setBulkMarking] = useState<Record<number, boolean>>({});
-  const [activeTab, setActiveTab] = useState<"tracking" | "watchlist">("tracking");
-  const [filter, setFilter] = useState<"all" | "upcoming" | "waiting" | "behind" | "completed">("all");
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+  const [filter, setFilter] = useState<Filter>(initialFilter);
 
-  const fetchWatchlist = () => {
-    setWatchlistLoading(true);
+  // Restore showRaw from sessionStorage on mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.sessionStorage.getItem(RAW_STORAGE_KEY);
+    if (!stored) return;
+    const n = Number(stored);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (Number.isFinite(n)) setShowRaw(n);
+  }, []);
+
+  // Persist showRaw + sync tab/filter to URL.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (showRaw === null) window.sessionStorage.removeItem(RAW_STORAGE_KEY);
+    else window.sessionStorage.setItem(RAW_STORAGE_KEY, String(showRaw));
+  }, [showRaw]);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (activeTab !== "tracking") params.set("tab", activeTab);
+    if (filter !== "all") params.set("filter", filter);
+    const qs = params.toString();
+    const url = qs ? `/dashboard?${qs}` : "/dashboard";
+    router.replace(url, { scroll: false });
+  }, [activeTab, filter, router]);
+
+  const fetchWatchlist = (silent = false) => {
+    if (!silent) setWatchlistLoading(true);
     fetch("/api/watchlist")
       .then((res) => res.json())
       .then((data: WatchlistResponse) => {
@@ -45,28 +106,105 @@ export default function Dashboard() {
         setPagination(data.pagination || null);
       })
       .catch(console.error)
-      .finally(() => setWatchlistLoading(false));
+      .finally(() => {
+        if (!silent) setWatchlistLoading(false);
+      });
+  };
+
+  // Optimistically bump a show's progress by one episode and clear nextEpisode
+  // (we don't know the next-next without a refetch). Server refetch reconciles.
+  const optimisticMarkEpisode = (episodeId: number) => {
+    setShows((prev) =>
+      prev.map((s) => {
+        if (s.progress.nextEpisode?.id !== episodeId) return s;
+        const newCompleted = s.progress.completed + 1;
+        const newUnwatched = Math.max(0, s.progress.unwatchedCount - 1);
+        const newPercent =
+          s.progress.aired > 0
+            ? Math.round((newCompleted / s.progress.aired) * 100)
+            : 0;
+        return {
+          ...s,
+          progress: {
+            ...s.progress,
+            completed: newCompleted,
+            unwatchedCount: newUnwatched,
+            percentWatched: newPercent,
+            isFullyCaughtUp: newCompleted >= s.progress.aired,
+            lastEpisode: s.progress.nextEpisode,
+            nextEpisode: null,
+          },
+        };
+      })
+    );
   };
 
   const handleMarkWatched = async (episodeId: number) => {
     setMarkingIds((prev) => ({ ...prev, [episodeId]: true }));
+    optimisticMarkEpisode(episodeId);
     try {
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ episodeId }),
       });
-      if (res.ok) {
-        // Refresh the watchlist to get updated progress
-        fetchWatchlist();
-      } else {
-        console.error("Failed to mark as watched");
-      }
+      if (!res.ok) console.error("Failed to mark as watched");
     } catch (err) {
       console.error(err);
     } finally {
       setMarkingIds((prev) => ({ ...prev, [episodeId]: false }));
+      // Reconcile in background — Trakt's /sync/watched has a few seconds of
+      // propagation delay, so the optimistic state stays visible meanwhile.
+      fetchWatchlist(true);
     }
+  };
+
+  // Optimistically mark a whole season or show as fully watched.
+  const optimisticMarkBulk = (showId: number, season?: number) => {
+    setShows((prev) =>
+      prev.map((s) => {
+        if (s.show.ids.trakt !== showId) return s;
+        if (typeof season === "number") {
+          const seasons = s.progress.seasons.map((sn) =>
+            sn.number === season
+              ? { ...sn, completed: sn.aired, isFullyWatched: true }
+              : sn
+          );
+          const completed = seasons.reduce((sum, sn) => sum + sn.completed, 0);
+          return {
+            ...s,
+            progress: {
+              ...s.progress,
+              seasons,
+              completed,
+              unwatchedCount: Math.max(0, s.progress.aired - completed),
+              percentWatched:
+                s.progress.aired > 0
+                  ? Math.round((completed / s.progress.aired) * 100)
+                  : 0,
+              isFullyCaughtUp: completed >= s.progress.aired,
+              nextEpisode: null,
+            },
+          };
+        }
+        return {
+          ...s,
+          progress: {
+            ...s.progress,
+            seasons: s.progress.seasons.map((sn) => ({
+              ...sn,
+              completed: sn.aired,
+              isFullyWatched: true,
+            })),
+            completed: s.progress.aired,
+            unwatchedCount: 0,
+            percentWatched: 100,
+            isFullyCaughtUp: true,
+            nextEpisode: null,
+          },
+        };
+      })
+    );
   };
 
   const handleMarkBulk = async (
@@ -74,21 +212,19 @@ export default function Dashboard() {
     body: { showId: number; season?: number }
   ) => {
     setBulkMarking((prev) => ({ ...prev, [showId]: true }));
+    optimisticMarkBulk(showId, body.season);
     try {
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (res.ok) {
-        fetchWatchlist();
-      } else {
-        console.error("Failed to mark bulk watched");
-      }
+      if (!res.ok) console.error("Failed to mark bulk watched");
     } catch (err) {
       console.error(err);
     } finally {
       setBulkMarking((prev) => ({ ...prev, [showId]: false }));
+      fetchWatchlist(true);
     }
   };
 
@@ -282,9 +418,19 @@ export default function Dashboard() {
           </h2>
 
           {watchlistLoading ? (
-            <div className="watchlist-loading">
-              <div className="loading-spinner" />
-              <p className="loading-text">Fetching your watchlist + progress…</p>
+            <div className="watchlist-grid" aria-busy="true" aria-label="Loading watchlist">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="skeleton-card">
+                  <div className="skeleton skeleton-poster" />
+                  <div className="skeleton-body">
+                    <div className="skeleton skeleton-line title" />
+                    <div className="skeleton skeleton-line" />
+                    <div className="skeleton skeleton-line medium" />
+                    <div className="skeleton skeleton-line bar" />
+                    <div className="skeleton skeleton-line short" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : shows.length === 0 ? (
             <div className="coming-soon">
@@ -464,13 +610,13 @@ export default function Dashboard() {
                     <button
                       className="raw-toggle"
                       onClick={() =>
-                        setShowRaw(showRaw === index ? null : index)
+                        setShowRaw(showRaw === ids.trakt ? null : ids.trakt)
                       }
                     >
-                      {showRaw === index ? "Hide" : "Show"} raw data
+                      {showRaw === ids.trakt ? "Hide" : "Show"} raw data
                     </button>
 
-                    {showRaw === index && (
+                    {showRaw === ids.trakt && (
                       <pre className="raw-json">
                         {JSON.stringify(tracked, null, 2)}
                       </pre>

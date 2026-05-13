@@ -22,6 +22,7 @@ export function SearchShows({ existingIds, onAdded }: Props) {
   const [addingIds, setAddingIds] = useState<Record<number, boolean>>({});
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -35,12 +36,18 @@ export function SearchShows({ existingIds, onAdded }: Props) {
         return;
       }
 
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setLoading(true);
       setError(null);
       try {
         const res = await fetch(
-          `/api/search?q=${encodeURIComponent(trimmed)}`
+          `/api/search?q=${encodeURIComponent(trimmed)}`,
+          { signal: controller.signal }
         );
+        if (controller.signal.aborted) return;
         if (!res.ok) {
           setError("Search failed");
           setResults([]);
@@ -48,16 +55,18 @@ export function SearchShows({ existingIds, onAdded }: Props) {
           const data = await res.json();
           setResults(data.results ?? []);
         }
-      } catch {
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return;
         setError("Search failed");
         setResults([]);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
-    }, 300);
+    }, 250);
 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
     };
   }, [query]);
 
