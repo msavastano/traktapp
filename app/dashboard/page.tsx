@@ -8,6 +8,7 @@ import Link from "next/link";
 import type { TrackedShow } from "@/lib/types";
 import { SearchShows } from "@/components/search-shows";
 import { WatchedMenu } from "@/components/watched-menu";
+import { UnwatchMenu } from "@/components/unwatch-menu";
 
 const posterUrl = (s: TrackedShow): string | null => {
   const p = s.show.images?.poster?.[0];
@@ -68,6 +69,7 @@ function DashboardInner() {
   const [showRaw, setShowRaw] = useState<number | null>(null);
   const [markingIds, setMarkingIds] = useState<Record<number, boolean>>({});
   const [bulkMarking, setBulkMarking] = useState<Record<number, boolean>>({});
+  const [unwatching, setUnwatching] = useState<Record<number, boolean>>({});
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [filter, setFilter] = useState<Filter>(initialFilter);
 
@@ -205,6 +207,80 @@ function DashboardInner() {
         };
       })
     );
+  };
+
+  // Optimistic unwatch: episode (decrement by 1) or season (zero that season).
+  const optimisticUnwatch = (
+    showId: number,
+    mode: { kind: "episode" } | { kind: "season"; season: number }
+  ) => {
+    setShows((prev) =>
+      prev.map((s) => {
+        if (s.show.ids.trakt !== showId) return s;
+        if (mode.kind === "episode") {
+          const newCompleted = Math.max(0, s.progress.completed - 1);
+          return {
+            ...s,
+            progress: {
+              ...s.progress,
+              completed: newCompleted,
+              unwatchedCount: s.progress.aired - newCompleted,
+              percentWatched:
+                s.progress.aired > 0
+                  ? Math.round((newCompleted / s.progress.aired) * 100)
+                  : 0,
+              isFullyCaughtUp: false,
+              lastEpisode: null,
+              nextEpisode: null,
+            },
+          };
+        }
+        const seasons = s.progress.seasons.map((sn) =>
+          sn.number === mode.season
+            ? { ...sn, completed: 0, isFullyWatched: false }
+            : sn
+        );
+        const completed = seasons.reduce((sum, sn) => sum + sn.completed, 0);
+        return {
+          ...s,
+          progress: {
+            ...s.progress,
+            seasons,
+            completed,
+            unwatchedCount: s.progress.aired - completed,
+            percentWatched:
+              s.progress.aired > 0
+                ? Math.round((completed / s.progress.aired) * 100)
+                : 0,
+            isFullyCaughtUp: completed >= s.progress.aired,
+            lastEpisode: null,
+            nextEpisode: null,
+          },
+        };
+      })
+    );
+  };
+
+  const handleUnwatch = async (
+    showId: number,
+    body: { episodeId?: number; showId?: number; season?: number },
+    mode: { kind: "episode" } | { kind: "season"; season: number }
+  ) => {
+    setUnwatching((prev) => ({ ...prev, [showId]: true }));
+    optimisticUnwatch(showId, mode);
+    try {
+      const res = await fetch("/api/history", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) console.error("Failed to unwatch");
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setUnwatching((prev) => ({ ...prev, [showId]: false }));
+      fetchWatchlist(true);
+    }
   };
 
   const handleMarkBulk = async (
@@ -554,6 +630,27 @@ function DashboardInner() {
                             S{String(progress.lastEpisode.season).padStart(2, "0")}
                             E{String(progress.lastEpisode.episode).padStart(2, "0")}
                             {" · "}{progress.lastEpisode.title}
+                            {" "}
+                            <UnwatchMenu
+                              showTitle={show.title}
+                              episodeLabel={`S${String(progress.lastEpisode.season).padStart(2, "0")}E${String(progress.lastEpisode.episode).padStart(2, "0")} · ${progress.lastEpisode.title}`}
+                              episodeSeason={progress.lastEpisode.season}
+                              busy={unwatching[ids.trakt]}
+                              onUnwatchEpisode={() =>
+                                handleUnwatch(
+                                  ids.trakt,
+                                  { episodeId: progress.lastEpisode!.id },
+                                  { kind: "episode" }
+                                )
+                              }
+                              onUnwatchSeason={() =>
+                                handleUnwatch(
+                                  ids.trakt,
+                                  { showId: ids.trakt, season: progress.lastEpisode!.season },
+                                  { kind: "season", season: progress.lastEpisode!.season }
+                                )
+                              }
+                            />
                           </span>
                         </div>
                       )}

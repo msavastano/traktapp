@@ -12,29 +12,17 @@ import { cacheDelete, watchlistKey } from "@/lib/cache";
 const TRAKT_API_BASE = "https://api.trakt.tv";
 const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
 
-/**
- * POST /api/history
- *
- * Marks watched in the user's Trakt history. Body shapes:
- *   { episodeId: number }                    — one episode
- *   { showId: number, season: number }       — entire season of a show
- *   { showId: number }                       — entire show (every aired episode)
- */
-export async function POST(req: Request) {
+async function getValidTokens() {
   const cookieStore = await cookies();
   const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (!encoded) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+  if (!encoded) return { error: "Not authenticated", status: 401 as const };
 
   let tokens = decodeTokens(encoded);
   if (!tokens) {
     cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ error: "Invalid token data" }, { status: 401 });
+    return { error: "Invalid token data", status: 401 as const };
   }
 
-  // Auto-refresh if expired
   if (isTokenExpired(tokens)) {
     try {
       tokens = await refreshAccessToken(tokens.refresh_token);
@@ -47,33 +35,67 @@ export async function POST(req: Request) {
       });
     } catch {
       cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ user: null }, { status: 401 });
+      return { error: "Token refresh failed", status: 401 as const };
     }
   }
 
+  return { tokens };
+}
+
+function buildPayload(body: {
+  episodeId?: number;
+  showId?: number;
+  season?: number;
+}) {
+  const { episodeId, showId, season } = body;
+  if (episodeId) return { episodes: [{ ids: { trakt: episodeId } }] };
+  if (showId && typeof season === "number") {
+    return { shows: [{ ids: { trakt: showId }, seasons: [{ number: season }] }] };
+  }
+  if (showId) return { shows: [{ ids: { trakt: showId } }] };
+  return null;
+}
+
+/**
+ * POST /api/history — marks watched.
+ * DELETE /api/history — removes from history (unwatch).
+ *
+ * Body shapes (both methods):
+ *   { episodeId: number }                    — one episode
+ *   { showId: number, season: number }       — entire season of a show
+ *   { showId: number }                       — entire show (every aired episode)
+ */
+export async function POST(req: Request) {
+  return handleHistory(req, "add");
+}
+
+export async function DELETE(req: Request) {
+  return handleHistory(req, "remove");
+}
+
+async function handleHistory(req: Request, action: "add" | "remove") {
+  const auth = await getValidTokens();
+  if ("error" in auth) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
+  }
+  const { tokens } = auth;
+
   try {
-    const { episodeId, showId, season } = await req.json();
-
-    let payload: Record<string, unknown>;
-
-    if (episodeId) {
-      payload = { episodes: [{ ids: { trakt: episodeId } }] };
-    } else if (showId && typeof season === "number") {
-      payload = {
-        shows: [
-          { ids: { trakt: showId }, seasons: [{ number: season }] },
-        ],
-      };
-    } else if (showId) {
-      payload = { shows: [{ ids: { trakt: showId } }] };
-    } else {
+    const body = await req.json();
+    const payload = buildPayload(body);
+    if (!payload) {
       return NextResponse.json(
         { error: "episodeId or showId is required" },
         { status: 400 }
       );
     }
 
-    const res = await fetch(`${TRAKT_API_BASE}/sync/history`, {
+    const url =
+      action === "add"
+        ? `${TRAKT_API_BASE}/sync/history`
+        : `${TRAKT_API_BASE}/sync/history/remove`;
+
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -87,9 +109,9 @@ export async function POST(req: Request) {
 
     if (!res.ok) {
       const text = await res.text();
-      console.error(`Sync history failed (${res.status}):`, text);
+      console.error(`Sync history ${action} failed (${res.status}):`, text);
       return NextResponse.json(
-        { error: "Failed to mark as watched" },
+        { error: action === "add" ? "Failed to mark as watched" : "Failed to unwatch" },
         { status: res.status }
       );
     }
@@ -98,9 +120,9 @@ export async function POST(req: Request) {
     cacheDelete(watchlistKey(tokens.access_token));
     return NextResponse.json(data);
   } catch (error) {
-    console.error("Sync history error:", error);
+    console.error(`Sync history ${action} error:`, error);
     return NextResponse.json(
-      { error: "Failed to mark as watched" },
+      { error: action === "add" ? "Failed to mark as watched" : "Failed to unwatch" },
       { status: 500 }
     );
   }

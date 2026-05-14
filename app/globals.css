@@ -1039,6 +1039,81 @@ select {
   color: var(--warm-brown);
 }
 
+/* --- Unwatch menu (inline next to "Last watched") --- */
+.unwatch-menu {
+  position: relative;
+  display: inline-flex;
+  margin-left: var(--space-1);
+  vertical-align: baseline;
+}
+
+.unwatch-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    color var(--d-fast) var(--ease),
+    background var(--d-fast) var(--ease),
+    border-color var(--d-fast) var(--ease);
+}
+
+.unwatch-menu-toggle:hover:not(:disabled) {
+  color: var(--dusty-red);
+  border-color: var(--dusty-red);
+  background: var(--surface-container-low);
+}
+
+.unwatch-menu-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.unwatch-menu-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  min-width: 220px;
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-1);
+  box-shadow: var(--shadow-3);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.unwatch-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-surface);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--d-fast) var(--ease);
+}
+
+.unwatch-menu-item:hover {
+  background: var(--surface-container-low);
+  color: var(--dusty-red);
+}
+
 /* --- Raw JSON toggle --- */
 .raw-toggle {
   font-size: 12px;
