@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import type { TrackedShow } from "@/lib/types";
@@ -74,6 +74,9 @@ function DashboardInner() {
   const [newsOpenFor, setNewsOpenFor] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [filter, setFilter] = useState<Filter>(initialFilter);
+  // Ephemeral skip set — survives refetches within a session but not page reload.
+  // Trakt has no native skip concept, so skips are client-only.
+  const skippedEpisodeIdsRef = useRef<Set<number>>(new Set());
 
   // Restore showRaw from sessionStorage on mount.
   useEffect(() => {
@@ -101,12 +104,39 @@ function DashboardInner() {
     router.replace(url, { scroll: false });
   }, [activeTab, filter, router]);
 
+  const applySkips = (list: TrackedShow[]): TrackedShow[] => {
+    const skipped = skippedEpisodeIdsRef.current;
+    if (skipped.size === 0) return list;
+    return list.map((s) => {
+      const ne = s.progress.nextEpisode;
+      if (!ne || !skipped.has(ne.id)) return s;
+      const newCompleted = s.progress.completed + 1;
+      const newUnwatched = Math.max(0, s.progress.unwatchedCount - 1);
+      const newPercent =
+        s.progress.aired > 0
+          ? Math.round((newCompleted / s.progress.aired) * 100)
+          : 0;
+      return {
+        ...s,
+        progress: {
+          ...s.progress,
+          completed: newCompleted,
+          unwatchedCount: newUnwatched,
+          percentWatched: newPercent,
+          isFullyCaughtUp: newCompleted >= s.progress.aired,
+          lastEpisode: ne,
+          nextEpisode: null,
+        },
+      };
+    });
+  };
+
   const fetchWatchlist = (silent = false) => {
     if (!silent) setWatchlistLoading(true);
     fetch("/api/watchlist")
       .then((res) => res.json())
       .then((data: WatchlistResponse) => {
-        setShows(data.shows || []);
+        setShows(applySkips(data.shows || []));
         setPagination(data.pagination || null);
       })
       .catch(console.error)
@@ -141,6 +171,11 @@ function DashboardInner() {
         };
       })
     );
+  };
+
+  const handleSkipEpisode = (episodeId: number) => {
+    skippedEpisodeIdsRef.current.add(episodeId);
+    optimisticMarkEpisode(episodeId);
   };
 
   const handleMarkWatched = async (episodeId: number) => {
@@ -710,6 +745,9 @@ function DashboardInner() {
                                   showTitle={show.title}
                                   seasonNumber={progress.nextEpisode.season}
                                   busy={bulkMarking[ids.trakt]}
+                                  onSkipEpisode={() =>
+                                    handleSkipEpisode(progress.nextEpisode!.id)
+                                  }
                                   onMarkSeason={() =>
                                     handleMarkBulk(ids.trakt, {
                                       showId: ids.trakt,

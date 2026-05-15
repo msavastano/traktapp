@@ -9,6 +9,7 @@ interface Props {
   busy: boolean;
   onMarkSeason: () => void;
   onMarkShow: () => void;
+  onSkipEpisode?: () => void;
 }
 
 type Pending = null | { kind: "season" } | { kind: "show" };
@@ -19,6 +20,7 @@ export function WatchedMenu({
   busy,
   onMarkSeason,
   onMarkShow,
+  onSkipEpisode,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<Pending>(null);
@@ -67,6 +69,19 @@ export function WatchedMenu({
       </button>
       {open && (
         <div className="watched-menu-dropdown" role="menu">
+          {onSkipEpisode && (
+            <button
+              type="button"
+              role="menuitem"
+              className="watched-menu-item"
+              onClick={() => {
+                setOpen(false);
+                onSkipEpisode();
+              }}
+            >
+              Skip this episode
+            </button>
+          )}
           {seasonNumber !== null && (
             <button
               type="button"
