@@ -8,7 +8,8 @@
       "Bash(npm install *)",
       "Bash(node *)",
       "Bash(grep -E -A2 \"\\(watchlist\\\\\\\\\\\\\\\\route|dashboard\\\\\\\\\\\\\\\\page\\)\")",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(grep -A1 \"news-modal\\\\|api[/\\\\\\\\\\\\\\\\]news\\\\|dashboard[/\\\\\\\\\\\\\\\\]page\")"
     ]
   }
 }

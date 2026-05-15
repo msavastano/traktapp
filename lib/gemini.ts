@@ -102,3 +102,59 @@ export async function generateRecommendations(
   const parsed = JSON.parse(text) as { recommendations: GeminiRecommendation[] };
   return parsed.recommendations ?? [];
 }
+
+export interface NewsSource {
+  uri: string;
+  title: string;
+}
+
+export interface ShowNews {
+  summary: string;
+  sources: NewsSource[];
+}
+
+export async function generateShowNews(
+  title: string,
+  year: number | null
+): Promise<ShowNews> {
+  const ai = getClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = `Search the web for the latest news about the TV show "${title}"${year ? ` (${year})` : ""}. Today's date is ${today}.
+
+Focus on:
+- Renewal or cancellation status of upcoming seasons
+- Confirmed or rumored release/premiere dates
+- Production status (filming, post-production, delays)
+- Any recent announcements from the network, streamer, cast, or showrunners
+
+Write a concise update (3-6 short paragraphs or bullets) covering what's known about the show's return. If reliable news is sparse, say so plainly. Prefer information from the past 12 months. Cite sources inline by name where helpful.`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+      temperature: 0.4,
+    },
+  });
+
+  const summary = response.text ?? "";
+  if (!summary) {
+    throw new Error("Gemini returned empty news response");
+  }
+
+  type GroundingChunk = { web?: { uri?: string; title?: string } };
+  const chunks =
+    (response.candidates?.[0]?.groundingMetadata?.groundingChunks ??
+      []) as GroundingChunk[];
+  const seen = new Set<string>();
+  const sources: NewsSource[] = [];
+  for (const c of chunks) {
+    const uri = c.web?.uri;
+    if (!uri || seen.has(uri)) continue;
+    seen.add(uri);
+    sources.push({ uri, title: c.web?.title ?? uri });
+  }
+
+  return { summary, sources };
+}

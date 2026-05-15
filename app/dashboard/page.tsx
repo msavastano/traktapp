@@ -9,6 +9,7 @@ import type { TrackedShow } from "@/lib/types";
 import { SearchShows } from "@/components/search-shows";
 import { WatchedMenu } from "@/components/watched-menu";
 import { UnwatchMenu } from "@/components/unwatch-menu";
+import { NewsModal } from "@/components/news-modal";
 
 const posterUrl = (s: TrackedShow): string | null => {
   const p = s.show.images?.poster?.[0];
@@ -70,6 +71,7 @@ function DashboardInner() {
   const [markingIds, setMarkingIds] = useState<Record<number, boolean>>({});
   const [bulkMarking, setBulkMarking] = useState<Record<number, boolean>>({});
   const [unwatching, setUnwatching] = useState<Record<number, boolean>>({});
+  const [newsOpenFor, setNewsOpenFor] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [filter, setFilter] = useState<Filter>(initialFilter);
 
@@ -532,6 +534,16 @@ function DashboardInner() {
                 const { show, progress, trackingStatus, statusLabel } = tracked;
                 const ids = show.ids;
 
+                const hasKnownAirDate =
+                  Boolean(progress.upcomingEpisode?.firstAired) ||
+                  Boolean(
+                    progress.nextEpisode?.firstAired &&
+                      !progress.nextEpisode.isAired
+                  );
+                const showNewsButton =
+                  show.status?.toLowerCase() === "returning series" &&
+                  !hasKnownAirDate;
+
                 return (
                   <div
                     key={ids.trakt || index}
@@ -591,6 +603,25 @@ function DashboardInner() {
                         {progress.upcomingInSeason.remaining !== 1 ? "s" : ""}
                         {" "}left to air in Season {progress.upcomingInSeason.season}
                       </div>
+                    )}
+
+                    {showNewsButton && (
+                      <button
+                        type="button"
+                        className="news-btn"
+                        onClick={() => setNewsOpenFor(ids.trakt)}
+                      >
+                        📰 Latest news
+                      </button>
+                    )}
+
+                    {showNewsButton && (
+                      <NewsModal
+                        open={newsOpenFor === ids.trakt}
+                        showTitle={show.title}
+                        showYear={show.year}
+                        onClose={() => setNewsOpenFor(null)}
+                      />
                     )}
 
 
