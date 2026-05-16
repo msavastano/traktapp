@@ -2,10 +2,10 @@
 
 import { useAuth } from "@/lib/auth-context";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import type { TrackedShow } from "@/lib/types";
+import type { TrackedShow, NextEpisodeInfo } from "@/lib/types";
 import { SearchShows } from "@/components/search-shows";
 import { WatchedMenu } from "@/components/watched-menu";
 import { UnwatchMenu } from "@/components/unwatch-menu";
@@ -74,6 +74,14 @@ function DashboardInner() {
   const [newsOpenFor, setNewsOpenFor] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [filter, setFilter] = useState<Filter>(initialFilter);
+  // Ephemeral skip map — survives refetches within a session but not page reload.
+  // Trakt has no native skip concept, so skips are client-only.
+  // Maps: skipped episode id -> the next episode we advanced the user to.
+  // Used to re-apply skips after a server refetch (chain via repeated lookup).
+  const skippedEpisodeMapRef = useRef<Map<number, NextEpisodeInfo | null>>(
+    new Map()
+  );
+  const [skipPending, setSkipPending] = useState<Record<number, boolean>>({});
 
   // Restore showRaw from sessionStorage on mount.
   useEffect(() => {
@@ -101,12 +109,48 @@ function DashboardInner() {
     router.replace(url, { scroll: false });
   }, [activeTab, filter, router]);
 
+  const applySkips = (list: TrackedShow[]): TrackedShow[] => {
+    const skipMap = skippedEpisodeMapRef.current;
+    if (skipMap.size === 0) return list;
+    return list.map((s) => {
+      let ne = s.progress.nextEpisode;
+      let lastEp = s.progress.lastEpisode;
+      let completed = s.progress.completed;
+      let hops = 0;
+      // Walk the skip chain. Bounded by the map size to avoid infinite loops.
+      while (ne && skipMap.has(ne.id) && hops <= skipMap.size) {
+        lastEp = ne;
+        completed += 1;
+        ne = skipMap.get(ne.id) ?? null;
+        hops += 1;
+      }
+      if (completed === s.progress.completed) return s;
+      const unwatched = Math.max(0, s.progress.aired - completed);
+      const percent =
+        s.progress.aired > 0
+          ? Math.round((completed / s.progress.aired) * 100)
+          : 0;
+      return {
+        ...s,
+        progress: {
+          ...s.progress,
+          completed,
+          unwatchedCount: unwatched,
+          percentWatched: percent,
+          isFullyCaughtUp: completed >= s.progress.aired,
+          lastEpisode: lastEp,
+          nextEpisode: ne,
+        },
+      };
+    });
+  };
+
   const fetchWatchlist = (silent = false) => {
     if (!silent) setWatchlistLoading(true);
     fetch("/api/watchlist")
       .then((res) => res.json())
       .then((data: WatchlistResponse) => {
-        setShows(data.shows || []);
+        setShows(applySkips(data.shows || []));
         setPagination(data.pagination || null);
       })
       .catch(console.error)
@@ -143,20 +187,108 @@ function DashboardInner() {
     );
   };
 
-  const handleMarkWatched = async (episodeId: number) => {
-    setMarkingIds((prev) => ({ ...prev, [episodeId]: true }));
-    optimisticMarkEpisode(episodeId);
+  const advanceToEpisode = (
+    showId: number,
+    fromEpisodeId: number,
+    next: NextEpisodeInfo | null
+  ) => {
+    setShows((prev) =>
+      prev.map((s) => {
+        if (s.show.ids.trakt !== showId) return s;
+        if (s.progress.nextEpisode?.id !== fromEpisodeId) return s;
+        const newCompleted = s.progress.completed + 1;
+        const newUnwatched = Math.max(0, s.progress.unwatchedCount - 1);
+        const newPercent =
+          s.progress.aired > 0
+            ? Math.round((newCompleted / s.progress.aired) * 100)
+            : 0;
+        return {
+          ...s,
+          progress: {
+            ...s.progress,
+            completed: newCompleted,
+            unwatchedCount: newUnwatched,
+            percentWatched: newPercent,
+            isFullyCaughtUp: newCompleted >= s.progress.aired,
+            lastEpisode: s.progress.nextEpisode,
+            nextEpisode: next,
+          },
+        };
+      })
+    );
+  };
+
+  const handleSkipEpisode = async (
+    showId: number,
+    slug: string,
+    episode: NextEpisodeInfo
+  ) => {
+    setSkipPending((prev) => ({ ...prev, [episode.id]: true }));
+    try {
+      const res = await fetch(
+        `/api/next-episode?slug=${encodeURIComponent(slug)}&season=${episode.season}&episode=${episode.episode}`
+      );
+      const data: { next?: NextEpisodeInfo | null } = res.ok
+        ? await res.json()
+        : { next: null };
+      const next = data.next ?? null;
+      skippedEpisodeMapRef.current.set(episode.id, next);
+      advanceToEpisode(showId, episode.id, next);
+    } catch (err) {
+      console.error("skip failed:", err);
+      // Fallback: behave like the old skip (advance, no follow-up ep).
+      skippedEpisodeMapRef.current.set(episode.id, null);
+      advanceToEpisode(showId, episode.id, null);
+    } finally {
+      setSkipPending((prev) => ({ ...prev, [episode.id]: false }));
+    }
+  };
+
+  // When the watched episode is the tail of a skip chain, the chain's mapping
+  // becomes stale (it points to an episode the user has now consumed). Refresh
+  // the mapping in-place so applySkips advances to the next-next episode after
+  // the server refetch — otherwise the user stays parked on the just-watched ep.
+  const refreshSkipChainAfterWatch = async (
+    slug: string,
+    watched: NextEpisodeInfo
+  ) => {
+    const skipMap = skippedEpisodeMapRef.current;
+    const stale: number[] = [];
+    for (const [key, val] of skipMap.entries()) {
+      if (val && val.id === watched.id) stale.push(key);
+    }
+    if (stale.length === 0) return;
+    try {
+      const res = await fetch(
+        `/api/next-episode?slug=${encodeURIComponent(slug)}&season=${watched.season}&episode=${watched.episode}`
+      );
+      const data: { next?: NextEpisodeInfo | null } = res.ok
+        ? await res.json()
+        : { next: null };
+      for (const key of stale) skipMap.set(key, data.next ?? null);
+    } catch {
+      for (const key of stale) skipMap.set(key, null);
+    }
+  };
+
+  const handleMarkWatched = async (
+    slug: string,
+    episode: NextEpisodeInfo
+  ) => {
+    setMarkingIds((prev) => ({ ...prev, [episode.id]: true }));
+    optimisticMarkEpisode(episode.id);
     try {
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ episodeId }),
+        body: JSON.stringify({ episodeId: episode.id }),
       });
       if (!res.ok) console.error("Failed to mark as watched");
     } catch (err) {
       console.error(err);
     } finally {
-      setMarkingIds((prev) => ({ ...prev, [episodeId]: false }));
+      setMarkingIds((prev) => ({ ...prev, [episode.id]: false }));
+      await refreshSkipChainAfterWatch(slug, episode);
       // Reconcile in background — Trakt's /sync/watched has a few seconds of
       // propagation delay, so the optimistic state stays visible meanwhile.
       fetchWatchlist(true);
@@ -540,9 +672,12 @@ function DashboardInner() {
                     progress.nextEpisode?.firstAired &&
                       !progress.nextEpisode.isAired
                   );
-                const showNewsButton =
-                  show.status?.toLowerCase() === "returning series" &&
-                  !hasKnownAirDate;
+                const statusLower = show.status?.toLowerCase();
+                const newsEligibleStatus =
+                  statusLower === "returning series" ||
+                  statusLower === "in production" ||
+                  statusLower === "planned";
+                const showNewsButton = newsEligibleStatus && !hasKnownAirDate;
 
                 return (
                   <div
@@ -702,14 +837,21 @@ function DashboardInner() {
                                 <button
                                   className="mark-watched-btn"
                                   disabled={markingIds[progress.nextEpisode.id] || bulkMarking[ids.trakt]}
-                                  onClick={() => handleMarkWatched(progress.nextEpisode!.id)}
+                                  onClick={() => handleMarkWatched(show.ids.slug, progress.nextEpisode!)}
                                 >
                                   {markingIds[progress.nextEpisode.id] ? "..." : "Mark Watched ✓"}
                                 </button>
                                 <WatchedMenu
                                   showTitle={show.title}
                                   seasonNumber={progress.nextEpisode.season}
-                                  busy={bulkMarking[ids.trakt]}
+                                  busy={bulkMarking[ids.trakt] || skipPending[progress.nextEpisode.id]}
+                                  onSkipEpisode={() =>
+                                    handleSkipEpisode(
+                                      ids.trakt,
+                                      show.ids.slug,
+                                      progress.nextEpisode!
+                                    )
+                                  }
                                   onMarkSeason={() =>
                                     handleMarkBulk(ids.trakt, {
                                       showId: ids.trakt,
