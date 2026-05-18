@@ -12,6 +12,7 @@ import type {
   TraktWatchlistItem,
   TraktWatchedProgress,
   TraktEpisode,
+  TraktImages,
   TrackedShow,
   TrackingStatus,
   SeasonSummary,
@@ -54,6 +55,27 @@ async function fetchSeasons(
     return await res.json();
   } catch (err) {
     console.warn(`fetchSeasons ${slug} threw:`, err);
+    return null;
+  }
+}
+
+async function fetchShowImages(
+  slug: string,
+  accessToken: string
+): Promise<TraktImages | null> {
+  try {
+    const res = await fetch(
+      `${TRAKT_API_BASE}/shows/${slug}?extended=images`,
+      { headers: apiHeaders(accessToken), cache: "no-store" }
+    );
+    if (!res.ok) {
+      console.warn(`fetchShowImages ${slug} -> ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    return data?.images ?? null;
+  } catch (err) {
+    console.warn(`fetchShowImages ${slug} threw:`, err);
     return null;
   }
 }
@@ -149,10 +171,13 @@ export async function enrichWatchlistItem(
   accessToken: string
 ): Promise<TrackedShow> {
   const slug = item.show.ids.slug;
-  const [progress, seasonsRaw] = await Promise.all([
+  const needsImages = !item.show.images?.poster?.length;
+  const [progress, seasonsRaw, images] = await Promise.all([
     fetchProgress(slug, accessToken),
     fetchSeasons(slug, accessToken),
+    needsImages ? fetchShowImages(slug, accessToken) : Promise.resolve(null),
   ]);
+  const show = images ? { ...item.show, images } : item.show;
 
   const aired = progress?.aired ?? 0;
   const completed = progress?.completed ?? 0;
@@ -191,7 +216,7 @@ export async function enrichWatchlistItem(
     }
   }
 
-  const { status, label } = computeTrackingStatus(item.show, progress);
+  const { status, label } = computeTrackingStatus(show, progress);
   // Trakt sometimes returns placeholder next-episode entries for future
   // seasons (no first_aired, title like "Episode #2.1"). Drop them — they're
   // not real scheduled episodes and shouldn't appear as "Next to watch".
@@ -200,7 +225,7 @@ export async function enrichWatchlistItem(
 
   return {
     listedAt: item.listed_at,
-    show: item.show,
+    show,
     progress: {
       aired,
       completed,
