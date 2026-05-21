@@ -6,6 +6,7 @@ import {
   refreshAccessToken,
   encodeTokens,
   COOKIE_NAME,
+  fetchTrakt,
 } from "@/lib/trakt";
 import { cacheDelete, watchlistKey } from "@/lib/cache";
 
@@ -95,7 +96,7 @@ async function handleHistory(req: Request, action: "add" | "remove") {
         ? `${TRAKT_API_BASE}/sync/history`
         : `${TRAKT_API_BASE}/sync/history/remove`;
 
-    const res = await fetch(url, {
+    const res = await fetchTrakt(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

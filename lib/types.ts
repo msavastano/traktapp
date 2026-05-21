@@ -130,9 +130,13 @@ export interface NextEpisodeInfo {
   title: string;
   firstAired: string | null;
   isAired: boolean; // true if air date is in the past
+  runtime?: number;
 }
 
 export interface TrackedShow {
+  isEnriched?: boolean;
+  enrichmentError?: boolean;
+
   // --- Watchlist info ---
   listedAt: string;
 

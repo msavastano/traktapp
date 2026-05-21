@@ -18,6 +18,7 @@ import type {
   SeasonSummary,
   NextEpisodeInfo,
 } from "./types";
+import { fetchTrakt } from "./trakt";
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
 const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
@@ -44,7 +45,7 @@ async function fetchSeasons(
   accessToken: string
 ): Promise<TraktSeasonInfo[] | null> {
   try {
-    const res = await fetch(
+    const res = await fetchTrakt(
       `${TRAKT_API_BASE}/shows/${slug}/seasons?extended=full`,
       { headers: apiHeaders(accessToken), cache: "no-store" }
     );
@@ -64,7 +65,7 @@ async function fetchShowImages(
   accessToken: string
 ): Promise<TraktImages | null> {
   try {
-    const res = await fetch(
+    const res = await fetchTrakt(
       `${TRAKT_API_BASE}/shows/${slug}?extended=images`,
       { headers: apiHeaders(accessToken), cache: "no-store" }
     );
@@ -85,8 +86,8 @@ async function fetchProgress(
   accessToken: string
 ): Promise<TraktWatchedProgress | null> {
   try {
-    const res = await fetch(
-      `${TRAKT_API_BASE}/shows/${slug}/progress/watched?hidden=false&specials=false&count_specials=false`,
+    const res = await fetchTrakt(
+      `${TRAKT_API_BASE}/shows/${slug}/progress/watched?hidden=false&specials=false&count_specials=false&extended=full`,
       { headers: apiHeaders(accessToken), cache: "no-store" }
     );
     if (!res.ok) {
@@ -100,7 +101,10 @@ async function fetchProgress(
   }
 }
 
-function toNextEpisodeInfo(ep: TraktEpisode | null): NextEpisodeInfo | null {
+function toNextEpisodeInfo(
+  ep: TraktEpisode | null,
+  fallbackRuntime?: number
+): NextEpisodeInfo | null {
   if (!ep) return null;
   const firstAired = ep.first_aired ?? null;
   return {
@@ -110,6 +114,7 @@ function toNextEpisodeInfo(ep: TraktEpisode | null): NextEpisodeInfo | null {
     title: ep.title,
     firstAired,
     isAired: firstAired ? new Date(firstAired) <= new Date() : false,
+    runtime: ep.runtime ?? fallbackRuntime,
   };
 }
 
@@ -237,9 +242,9 @@ export async function enrichWatchlistItem(
       seasons,
 
       lastWatchedAt: progress?.last_watched_at ?? null,
-      lastEpisode: toNextEpisodeInfo(progress?.last_episode ?? null),
-      nextEpisode: toNextEpisodeInfo(nextEp),
-      upcomingEpisode: toNextEpisodeInfo(nextEp),
+      lastEpisode: toNextEpisodeInfo(progress?.last_episode ?? null, show.runtime),
+      nextEpisode: toNextEpisodeInfo(nextEp, show.runtime),
+      upcomingEpisode: toNextEpisodeInfo(nextEp, show.runtime),
       upcomingInSeason,
     },
     trackingStatus: status,
@@ -250,11 +255,15 @@ export async function enrichWatchlistItem(
 export async function enrichWatchlist(
   items: TraktWatchlistItem[],
   accessToken: string,
-  concurrency = 8
+  concurrency = 2
 ): Promise<TrackedShow[]> {
   const results: TrackedShow[] = [];
 
   for (let i = 0; i < items.length; i += concurrency) {
+    if (i > 0) {
+      // Add a small throttle delay between batches to avoid rate limit spikes
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     const batch = items.slice(i, i + concurrency);
     const settled = await Promise.allSettled(
       batch.map((item) => enrichWatchlistItem(item, accessToken))

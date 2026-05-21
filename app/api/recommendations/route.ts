@@ -6,6 +6,7 @@ import {
   refreshAccessToken,
   encodeTokens,
   COOKIE_NAME,
+  fetchTrakt,
 } from "@/lib/trakt";
 import { generateRecommendations, TasteShow, GeminiRecommendation } from "@/lib/gemini";
 import type { TraktShow } from "@/lib/types";
@@ -79,8 +80,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const [watchlistRes, watchedRes] = await Promise.all([
-      fetch(`${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full`, { headers }),
-      fetch(`${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full`, { headers }),
+      fetchTrakt(`${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full`, { headers }),
+      fetchTrakt(`${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full`, { headers }),
     ]);
 
     if (!watchlistRes.ok || !watchedRes.ok) {
@@ -141,7 +142,7 @@ export async function GET(req: NextRequest) {
             extended: "full,images",
             limit: "5",
           });
-          const res = await fetch(
+          const res = await fetchTrakt(
             `${TRAKT_API_BASE}/search/show?${params.toString()}`,
             { headers }
           );

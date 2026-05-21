@@ -6,8 +6,9 @@ import {
   refreshAccessToken,
   encodeTokens,
   COOKIE_NAME,
+  fetchTrakt,
 } from "@/lib/trakt";
-import { enrichWatchlist } from "@/lib/enrich";
+import { enrichWatchlist, enrichWatchlistItem } from "@/lib/enrich";
 import { cacheGet, cacheSet, cacheDelete, watchlistKey } from "@/lib/cache";
 import type { TrackedShow } from "@/lib/types";
 
@@ -33,7 +34,7 @@ const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
  *   - Next/upcoming episode info
  *   - Computed tracking status
  */
-export async function GET() {
+export async function GET(req: Request) {
   const cookieStore = await cookies();
   const encoded = cookieStore.get(COOKIE_NAME)?.value;
 
@@ -64,6 +65,9 @@ export async function GET() {
     }
   }
 
+  const { searchParams } = new URL(req.url);
+  const shouldStream = searchParams.get("stream") === "true";
+
   try {
     const cacheKey = watchlistKey(tokens.access_token);
     const cached = cacheGet<WatchlistPayload>(cacheKey);
@@ -81,11 +85,11 @@ export async function GET() {
 
     // Step 1: Fetch the raw watchlist AND watched shows with extended info
     const [watchlistRes, watchedRes] = await Promise.all([
-      fetch(
+      fetchTrakt(
         `${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full,images`,
         { headers }
       ),
-      fetch(
+      fetchTrakt(
         `${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full,images`,
         { headers }
       )
@@ -113,6 +117,7 @@ export async function GET() {
     const rawWatched = await watchedRes.json();
 
     // Map watched items to the same structure as watchlist items
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const mappedWatched = rawWatched.map((item: any) => ({
       listed_at: item.last_watched_at || item.last_updated_at || new Date().toISOString(),
       type: "show",
@@ -120,17 +125,23 @@ export async function GET() {
     }));
 
     // Combine them, deduplicating by Trakt ID
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const showMap = new Map<number, any>();
     
     for (const item of rawWatchlist) {
       if (item.show?.ids?.trakt) {
-        showMap.set(item.show.ids.trakt, item);
+        showMap.set(item.show.ids.trakt, { ...item, fromWatchlist: true });
       }
     }
     
     for (const item of mappedWatched) {
       if (item.show?.ids?.trakt) {
-        showMap.set(item.show.ids.trakt, item);
+        const existing = showMap.get(item.show.ids.trakt);
+        showMap.set(item.show.ids.trakt, {
+          ...item,
+          fromWatchlist: existing ? existing.fromWatchlist : false,
+          fromWatched: true,
+        });
       }
     }
 
@@ -139,17 +150,123 @@ export async function GET() {
     // Sort combined list by listed_at/last_watched_at descending
     combinedList.sort((a, b) => new Date(b.listed_at).getTime() - new Date(a.listed_at).getTime());
 
-    // Step 2: Enrich each show with progress + tracking status
+    const paginationPayload = {
+      page: watchlistRes.headers.get("x-pagination-page"),
+      limit: watchlistRes.headers.get("x-pagination-limit"),
+      pageCount: watchlistRes.headers.get("x-pagination-page-count"),
+      itemCount: String(combinedList.length),
+    };
+
+    if (shouldStream) {
+      const encoder = new TextEncoder();
+      let aborted = false;
+
+      const readableStream = new ReadableStream({
+        async start(controller) {
+          // Send initial metadata packet
+          const initialMetadata = {
+            type: "metadata",
+            shows: combinedList.map((item) => {
+              const isWatched = item.fromWatched === true;
+              return {
+                listedAt: item.listed_at,
+                show: item.show,
+                trackingStatus: isWatched ? "behind" : "not_started",
+                statusLabel: isWatched ? "Loading progress..." : "Not started · Loading...",
+                isEnriched: false,
+              };
+            }),
+            pagination: paginationPayload,
+          };
+          controller.enqueue(encoder.encode(JSON.stringify(initialMetadata) + "\n"));
+
+          if (combinedList.length === 0) {
+            controller.close();
+            return;
+          }
+
+          const queue = [...combinedList];
+          const enrichedShowsMap = new Map<number, TrackedShow>();
+
+          const runWorker = async () => {
+            while (queue.length > 0 && !aborted) {
+              const item = queue.shift();
+              if (!item) break;
+              try {
+                // Add a small throttle delay before processing to stagger requests
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                if (aborted) break;
+
+                const enriched = await enrichWatchlistItem(item, tokens.access_token);
+                if (aborted) break;
+
+                enrichedShowsMap.set(item.show.ids.trakt, enriched);
+
+                controller.enqueue(
+                  encoder.encode(
+                    JSON.stringify({
+                      type: "enrich",
+                      showId: item.show.ids.trakt,
+                      enriched,
+                    }) + "\n"
+                  )
+                );
+              } catch (err) {
+                if (aborted) break;
+                console.error(`Error enriching show ${item.show.title}:`, err);
+                controller.enqueue(
+                  encoder.encode(
+                    JSON.stringify({
+                      type: "error",
+                      showId: item.show.ids.trakt,
+                      error: "Failed to enrich",
+                    }) + "\n"
+                  )
+                );
+              }
+            }
+          };
+
+          const CONCURRENCY = 2;
+          const workers = Array.from({ length: CONCURRENCY }, () => runWorker());
+          await Promise.all(workers);
+
+          // Cache the full result if all completed without abort
+          if (!aborted) {
+            const finalEnrichedShows = combinedList
+              .map((item) => enrichedShowsMap.get(item.show.ids.trakt))
+              .filter(Boolean) as TrackedShow[];
+
+            const payload: WatchlistPayload = {
+              shows: finalEnrichedShows,
+              pagination: paginationPayload,
+            };
+            cacheSet(cacheKey, payload);
+          }
+
+          controller.close();
+        },
+        cancel() {
+          aborted = true;
+        },
+      });
+
+      return new Response(readableStream, {
+        headers: {
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          "Connection": "keep-alive",
+          "x-cache": "MISS",
+        },
+      });
+    }
+
+    // Step 2: Enrich each show with progress + tracking status (standard JSON flow)
     const enriched = await enrichWatchlist(combinedList, tokens.access_token);
 
     const payload: WatchlistPayload = {
       shows: enriched,
-      pagination: {
-        page: watchlistRes.headers.get("x-pagination-page"),
-        limit: watchlistRes.headers.get("x-pagination-limit"),
-        pageCount: watchlistRes.headers.get("x-pagination-page-count"),
-        itemCount: String(combinedList.length),
-      },
+      pagination: paginationPayload,
     };
     cacheSet(cacheKey, payload);
 
@@ -205,7 +322,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "showId is required" }, { status: 400 });
     }
 
-    const res = await fetch(`${TRAKT_API_BASE}/sync/watchlist`, {
+    const res = await fetchTrakt(`${TRAKT_API_BASE}/sync/watchlist`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

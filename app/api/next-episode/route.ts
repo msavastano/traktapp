@@ -6,6 +6,7 @@ import {
   refreshAccessToken,
   encodeTokens,
   COOKIE_NAME,
+  fetchTrakt,
 } from "@/lib/trakt";
 import type { NextEpisodeInfo, TraktEpisode } from "@/lib/types";
 
@@ -21,6 +22,7 @@ function toNextEpisodeInfo(ep: TraktEpisode): NextEpisodeInfo {
     title: ep.title,
     firstAired,
     isAired: firstAired ? new Date(firstAired) <= new Date() : false,
+    runtime: ep.runtime ?? undefined,
   };
 }
 
@@ -29,7 +31,7 @@ async function fetchSeasonEpisodes(
   season: number,
   accessToken: string
 ): Promise<TraktEpisode[] | null> {
-  const res = await fetch(
+  const res = await fetchTrakt(
     `${TRAKT_API_BASE}/shows/${slug}/seasons/${season}?extended=full`,
     {
       headers: {

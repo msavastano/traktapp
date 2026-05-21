@@ -82,6 +82,7 @@ function DashboardInner() {
     new Map()
   );
   const [skipPending, setSkipPending] = useState<Record<number, boolean>>({});
+  const [now] = useState(() => Date.now());
 
   // Restore showRaw from sessionStorage on mount.
   useEffect(() => {
@@ -113,6 +114,7 @@ function DashboardInner() {
     const skipMap = skippedEpisodeMapRef.current;
     if (skipMap.size === 0) return list;
     return list.map((s) => {
+      if (!s.progress) return s;
       let ne = s.progress.nextEpisode;
       let lastEp = s.progress.lastEpisode;
       let completed = s.progress.completed;
@@ -145,18 +147,139 @@ function DashboardInner() {
     });
   };
 
-  const fetchWatchlist = (silent = false) => {
+  const fetchWatchlist = async (silent = false) => {
     if (!silent) setWatchlistLoading(true);
-    fetch("/api/watchlist")
-      .then((res) => res.json())
-      .then((data: WatchlistResponse) => {
-        setShows(applySkips(data.shows || []));
+    try {
+      const response = await fetch("/api/watchlist?stream=true");
+      if (!response.ok) {
+        throw new Error(`Failed to fetch watchlist: ${response.status}`);
+      }
+
+      const contentType = response.headers.get("Content-Type") || "";
+      if (contentType.includes("application/json")) {
+        const data = await response.json();
+        const showsWithFlags = (data.shows || []).map((s: TrackedShow) => ({
+          ...s,
+          isEnriched: true,
+        }));
+        setShows(applySkips(showsWithFlags));
         setPagination(data.pagination || null);
-      })
-      .catch(console.error)
-      .finally(() => {
         if (!silent) setWatchlistLoading(false);
-      });
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("No response body reader");
+      }
+
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.type === "metadata") {
+              const incomingShows = data.shows || [];
+              setShows((prev) => {
+                const prevMap = new Map(prev.map((s) => [s.show.ids.trakt, s]));
+                const merged = incomingShows.map((s: TrackedShow) => {
+                  const existing = prevMap.get(s.show.ids.trakt);
+                  if (existing && existing.isEnriched) {
+                    return existing;
+                  }
+                  return {
+                    ...s,
+                    isEnriched: false,
+                  };
+                });
+                return applySkips(merged);
+              });
+              setPagination(data.pagination || null);
+              if (!silent) setWatchlistLoading(false);
+            } else if (data.type === "enrich") {
+              setShows((prev) => {
+                const updated = prev.map((s) =>
+                  s.show.ids.trakt === data.showId
+                    ? { ...data.enriched, isEnriched: true }
+                    : s
+                );
+                return applySkips(updated);
+              });
+            } else if (data.type === "error") {
+              setShows((prev) => {
+                const updated = prev.map((s) =>
+                  s.show.ids.trakt === data.showId
+                    ? { ...s, isEnriched: true, enrichmentError: true }
+                    : s
+                );
+                return applySkips(updated);
+              });
+            }
+          } catch (e) {
+            console.error("Failed to parse stream line:", e);
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const data = JSON.parse(buffer);
+          if (data.type === "metadata") {
+            const incomingShows = data.shows || [];
+            setShows((prev) => {
+              const prevMap = new Map(prev.map((s) => [s.show.ids.trakt, s]));
+              const merged = incomingShows.map((s: TrackedShow) => {
+                const existing = prevMap.get(s.show.ids.trakt);
+                if (existing && existing.isEnriched) {
+                  return existing;
+                }
+                return {
+                  ...s,
+                  isEnriched: false,
+                };
+              });
+              return applySkips(merged);
+            });
+            setPagination(data.pagination || null);
+            if (!silent) setWatchlistLoading(false);
+          } else if (data.type === "enrich") {
+            setShows((prev) => {
+              const updated = prev.map((s) =>
+                s.show.ids.trakt === data.showId
+                  ? { ...data.enriched, isEnriched: true }
+                  : s
+              );
+              return applySkips(updated);
+            });
+          } else if (data.type === "error") {
+            setShows((prev) => {
+              const updated = prev.map((s) =>
+                s.show.ids.trakt === data.showId
+                  ? { ...s, isEnriched: true, enrichmentError: true }
+                  : s
+              );
+              return applySkips(updated);
+            });
+          }
+        } catch (e) {
+          console.error("Failed to parse trailing buffer:", e);
+        }
+      }
+    } catch (err) {
+      console.error("Stream fetch error:", err);
+    } finally {
+      if (!silent) setWatchlistLoading(false);
+    }
   };
 
   // Optimistically bump a show's progress by one episode and clear nextEpisode
@@ -446,8 +569,10 @@ function DashboardInner() {
 
   useEffect(() => {
     if (isAuthenticated) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchWatchlist();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
   const existingShowIds = useMemo(
@@ -455,24 +580,12 @@ function DashboardInner() {
     [shows]
   );
 
-  if (isLoading || !user) {
-    return (
-      <div className="loading-screen">
-        <div className="loading-spinner" />
-        <p className="loading-text">Loading your profile…</p>
-      </div>
-    );
-  }
-
-  // Split shows into active tracking vs watchlist
-  const trackingShows = shows.filter((s) => s.trackingStatus !== "not_started");
-  const watchlistShows = shows.filter((s) => s.trackingStatus === "not_started");
-
   // Air date of the next unwatched episode (past or future).
   // Falls back to the globally-upcoming episode for caught-up shows where
   // Trakt's progress.next_episode is null but a future ep is scheduled.
   // Returns null if no air date is known (e.g. all episodes watched).
   const nextUnwatchedAirTime = (s: TrackedShow): number | null => {
+    if (!s.progress) return null;
     const candidate =
       s.progress.nextEpisode?.firstAired ??
       s.progress.upcomingEpisode?.firstAired ??
@@ -482,51 +595,68 @@ function DashboardInner() {
     return Number.isFinite(t) ? t : null;
   };
 
-  // Sort: by closeness of next-unwatched air date to now (smallest
-  // |airDate - now| first). Past episodes recently aired bubble to the top
-  // of the Behind bucket; future episodes airing soon bubble to the top of
-  // the Upcoming bucket. Shows with no next-unwatched air date sort
-  // alphabetically at the end.
-  const now = Date.now();
-  const compareShows = (a: TrackedShow, b: TrackedShow) => {
-    const ta = nextUnwatchedAirTime(a);
-    const tb = nextUnwatchedAirTime(b);
-    if (ta !== null && tb !== null) return Math.abs(ta - now) - Math.abs(tb - now);
-    if (ta !== null) return -1;
-    if (tb !== null) return 1;
-    return (a.show.title ?? "").localeCompare(b.show.title ?? "");
-  };
+  const {
+    trackingShows,
+    watchlistShows,
+    upcomingCount,
+    waitingCount,
+    behindCount,
+    completedCount,
+    displayedShows,
+  } = useMemo(() => {
+    const tracking = shows.filter((s) => s.trackingStatus !== "not_started");
+    const watchlist = shows.filter((s) => s.trackingStatus === "not_started");
 
-  trackingShows.sort(compareShows);
-  watchlistShows.sort(compareShows);
+    const compareShows = (a: TrackedShow, b: TrackedShow) => {
+      const ta = nextUnwatchedAirTime(a);
+      const tb = nextUnwatchedAirTime(b);
+      if (ta !== null && tb !== null) return Math.abs(ta - now) - Math.abs(tb - now);
+      if (ta !== null) return -1;
+      if (tb !== null) return 1;
+      return (a.show.title ?? "").localeCompare(b.show.title ?? "");
+    };
 
-  // Compute summary stats for Tracking.
-  // Caught-up shows split into two buckets:
-  //   - "upcoming" — caught up AND next episode has a known air date
-  //   - "waiting"  — caught up AND no known next-episode air date
-  const upcomingCount = trackingShows.filter(
-    (s) => s.trackingStatus === "waiting_new_episodes"
-  ).length;
-  const waitingCount = trackingShows.filter(
-    (s) => s.trackingStatus === "waiting_new_season" || s.trackingStatus === "caught_up"
-  ).length;
-  const behindCount = trackingShows.filter((s) => s.trackingStatus === "behind").length;
-  const completedCount = trackingShows.filter((s) => s.trackingStatus === "completed").length;
+    tracking.sort(compareShows);
+    watchlist.sort(compareShows);
 
-  const filteredTrackingShows = trackingShows.filter((s) => {
-    if (filter === "all") return true;
-    if (filter === "upcoming") return s.trackingStatus === "waiting_new_episodes";
-    if (filter === "waiting") {
-      return (
-        s.trackingStatus === "waiting_new_season" ||
-        s.trackingStatus === "caught_up"
-      );
-    }
-    return s.trackingStatus === filter;
-  });
+    const upcoming = tracking.filter((s) => s.trackingStatus === "waiting_new_episodes").length;
+    const waiting = tracking.filter((s) => s.trackingStatus === "waiting_new_season" || s.trackingStatus === "caught_up").length;
+    const behind = tracking.filter((s) => s.trackingStatus === "behind").length;
+    const completed = tracking.filter((s) => s.trackingStatus === "completed").length;
 
-  // The list of shows currently being viewed based on the active tab
-  const displayedShows = activeTab === "tracking" ? filteredTrackingShows : watchlistShows;
+    const filteredTracking = tracking.filter((s) => {
+      if (filter === "all") return true;
+      if (filter === "upcoming") return s.trackingStatus === "waiting_new_episodes";
+      if (filter === "waiting") {
+        return (
+          s.trackingStatus === "waiting_new_season" ||
+          s.trackingStatus === "caught_up"
+        );
+      }
+      return s.trackingStatus === filter;
+    });
+
+    const displayed = activeTab === "tracking" ? filteredTracking : watchlist;
+
+    return {
+      trackingShows: tracking,
+      watchlistShows: watchlist,
+      upcomingCount: upcoming,
+      waitingCount: waiting,
+      behindCount: behind,
+      completedCount: completed,
+      displayedShows: displayed,
+    };
+  }, [shows, filter, activeTab, now]);
+
+  if (isLoading || !user) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner" />
+        <p className="loading-text">Loading your profile…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard" id="dashboard-page">
@@ -663,21 +793,22 @@ function DashboardInner() {
           ) : (
             <div className="watchlist-grid">
               {displayedShows.map((tracked, index) => {
-                const { show, progress, trackingStatus, statusLabel } = tracked;
+                const { show, progress, trackingStatus, statusLabel, isEnriched } = tracked;
                 const ids = show.ids;
 
-                const hasKnownAirDate =
-                  Boolean(progress.upcomingEpisode?.firstAired) ||
-                  Boolean(
-                    progress.nextEpisode?.firstAired &&
-                      !progress.nextEpisode.isAired
-                  );
+                const hasKnownAirDate = isEnriched && progress
+                  ? Boolean(progress.upcomingEpisode?.firstAired) ||
+                    Boolean(
+                      progress.nextEpisode?.firstAired &&
+                        !progress.nextEpisode.isAired
+                    )
+                  : false;
                 const statusLower = show.status?.toLowerCase();
                 const newsEligibleStatus =
                   statusLower === "returning series" ||
                   statusLower === "in production" ||
                   statusLower === "planned";
-                const showNewsButton = newsEligibleStatus && !hasKnownAirDate;
+                const showNewsButton = isEnriched && newsEligibleStatus && !hasKnownAirDate;
 
                 return (
                   <div
@@ -719,20 +850,26 @@ function DashboardInner() {
                     )}
 
                     {/* Progress bar */}
-                    <div className="progress-bar-container">
-                      <div className="progress-bar-track">
-                        <div
-                          className="progress-bar-fill"
-                          style={{ width: `${progress.percentWatched}%` }}
-                        />
+                    {isEnriched && progress ? (
+                      <div className="progress-bar-container">
+                        <div className="progress-bar-track">
+                          <div
+                            className="progress-bar-fill"
+                            style={{ width: `${progress.percentWatched}%` }}
+                          />
+                        </div>
+                        <span className="progress-bar-label">
+                          {progress.completed}/{progress.aired} episodes
+                          ({progress.percentWatched}%)
+                        </span>
                       </div>
-                      <span className="progress-bar-label">
-                        {progress.completed}/{progress.aired} episodes
-                        ({progress.percentWatched}%)
-                      </span>
-                    </div>
+                    ) : (
+                      <div className="progress-bar-container">
+                        <div className="skeleton skeleton-line bar" style={{ margin: '4px 0 8px 0' }} />
+                      </div>
+                    )}
 
-                    {progress.upcomingInSeason && (
+                    {isEnriched && progress?.upcomingInSeason && (
                       <div className="season-remaining">
                         📅 {progress.upcomingInSeason.remaining} episode
                         {progress.upcomingInSeason.remaining !== 1 ? "s" : ""}
@@ -768,7 +905,11 @@ function DashboardInner() {
                         </span>
                       )}
                       <span className="watchlist-meta-item">
-                        📺 {progress.totalSeasons} season{progress.totalSeasons !== 1 ? "s" : ""}
+                        📺 {isEnriched && progress ? (
+                          `${progress.totalSeasons} season${progress.totalSeasons !== 1 ? "s" : ""}`
+                        ) : (
+                          <span className="skeleton" style={{ display: 'inline-block', width: '20px', height: '12px', verticalAlign: 'middle', borderRadius: '2px' }} />
+                        )}
                       </span>
                       {show.network && (
                         <span className="watchlist-meta-item">
@@ -789,97 +930,115 @@ function DashboardInner() {
 
                     {/* Where left off / Next episode */}
                     <div className="episode-info-row">
-                      {progress.lastEpisode && (
-                        <div className="episode-info">
-                          <span className="episode-info-label">Last watched</span>
-                          <span className="episode-info-value">
-                            S{String(progress.lastEpisode.season).padStart(2, "0")}
-                            E{String(progress.lastEpisode.episode).padStart(2, "0")}
-                            {" · "}{progress.lastEpisode.title}
-                            {" "}
-                            <UnwatchMenu
-                              showTitle={show.title}
-                              episodeLabel={`S${String(progress.lastEpisode.season).padStart(2, "0")}E${String(progress.lastEpisode.episode).padStart(2, "0")} · ${progress.lastEpisode.title}`}
-                              episodeSeason={progress.lastEpisode.season}
-                              busy={unwatching[ids.trakt]}
-                              onUnwatchEpisode={() =>
-                                handleUnwatch(
-                                  ids.trakt,
-                                  { episodeId: progress.lastEpisode!.id },
-                                  { kind: "episode" }
-                                )
-                              }
-                              onUnwatchSeason={() =>
-                                handleUnwatch(
-                                  ids.trakt,
-                                  { showId: ids.trakt, season: progress.lastEpisode!.season },
-                                  { kind: "season", season: progress.lastEpisode!.season }
-                                )
-                              }
-                            />
-                          </span>
-                        </div>
-                      )}
-                      {progress.nextEpisode && (
-                        <div className="episode-info">
-                          <span className="episode-info-label">Next to watch</span>
-                          <span className="episode-info-value">
-                            S{String(progress.nextEpisode.season).padStart(2, "0")}
-                            E{String(progress.nextEpisode.episode).padStart(2, "0")}
-                            {" · "}{progress.nextEpisode.title}
-                            {progress.nextEpisode.firstAired && !progress.nextEpisode.isAired && (
-                              <span className="air-date">
-                                {" "}(airs {new Date(progress.nextEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })})
-                              </span>
-                            )}
-                            {progress.nextEpisode.isAired && (
-                              <span className="mark-watched-group">
-                                <button
-                                  className="mark-watched-btn"
-                                  disabled={markingIds[progress.nextEpisode.id] || bulkMarking[ids.trakt]}
-                                  onClick={() => handleMarkWatched(show.ids.slug, progress.nextEpisode!)}
-                                >
-                                  {markingIds[progress.nextEpisode.id] ? "..." : "Mark Watched ✓"}
-                                </button>
-                                <WatchedMenu
+                      {isEnriched && progress ? (
+                        <>
+                          {progress.lastEpisode && (
+                            <div className="episode-info">
+                              <span className="episode-info-label">Last watched</span>
+                              <span className="episode-info-value">
+                                S{String(progress.lastEpisode.season).padStart(2, "0")}
+                                E{String(progress.lastEpisode.episode).padStart(2, "0")}
+                                {" · "}{progress.lastEpisode.title}
+                                {progress.lastEpisode.runtime && ` · ${progress.lastEpisode.runtime}m`}
+                                {" "}
+                                <UnwatchMenu
                                   showTitle={show.title}
-                                  seasonNumber={progress.nextEpisode.season}
-                                  busy={bulkMarking[ids.trakt] || skipPending[progress.nextEpisode.id]}
-                                  onSkipEpisode={() =>
-                                    handleSkipEpisode(
+                                  episodeLabel={`S${String(progress.lastEpisode.season).padStart(2, "0")}E${String(progress.lastEpisode.episode).padStart(2, "0")} · ${progress.lastEpisode.title}`}
+                                  episodeSeason={progress.lastEpisode.season}
+                                  busy={unwatching[ids.trakt]}
+                                  onUnwatchEpisode={() =>
+                                    handleUnwatch(
                                       ids.trakt,
-                                      show.ids.slug,
-                                      progress.nextEpisode!
+                                      { episodeId: progress.lastEpisode!.id },
+                                      { kind: "episode" }
                                     )
                                   }
-                                  onMarkSeason={() =>
-                                    handleMarkBulk(ids.trakt, {
-                                      showId: ids.trakt,
-                                      season: progress.nextEpisode!.season,
-                                    })
-                                  }
-                                  onMarkShow={() =>
-                                    handleMarkBulk(ids.trakt, { showId: ids.trakt })
+                                  onUnwatchSeason={() =>
+                                    handleUnwatch(
+                                      ids.trakt,
+                                      { showId: ids.trakt, season: progress.lastEpisode!.season },
+                                      { kind: "season", season: progress.lastEpisode!.season }
+                                    )
                                   }
                                 />
                               </span>
-                            )}
-                          </span>
-                        </div>
-                      )}
-                      {progress.upcomingEpisode && progress.isFullyCaughtUp && (
-                        <div className="episode-info">
-                          <span className="episode-info-label">Upcoming</span>
-                          <span className="episode-info-value">
-                            S{String(progress.upcomingEpisode.season).padStart(2, "0")}
-                            E{String(progress.upcomingEpisode.episode).padStart(2, "0")}
-                            {" · "}{progress.upcomingEpisode.title}
-                            {progress.upcomingEpisode.firstAired && (
-                              <span className="air-date">
-                                {" "}({new Date(progress.upcomingEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })})
+                            </div>
+                          )}
+                          {progress.nextEpisode && (
+                            <div className="episode-info">
+                              <span className="episode-info-label">Next to watch</span>
+                              <span className="episode-info-value">
+                                S{String(progress.nextEpisode.season).padStart(2, "0")}
+                                E{String(progress.nextEpisode.episode).padStart(2, "0")}
+                                {" · "}{progress.nextEpisode.title}
+                                {progress.nextEpisode.runtime && ` · ${progress.nextEpisode.runtime}m`}
+                                {progress.nextEpisode.firstAired && !progress.nextEpisode.isAired && (
+                                  <span className="air-date">
+                                    {" "}(airs {new Date(progress.nextEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })})
+                                  </span>
+                                )}
+                                {progress.nextEpisode.isAired && (
+                                  <span className="mark-watched-group">
+                                    <button
+                                      className="mark-watched-btn"
+                                      disabled={markingIds[progress.nextEpisode.id] || bulkMarking[ids.trakt]}
+                                      onClick={() => handleMarkWatched(show.ids.slug, progress.nextEpisode!)}
+                                    >
+                                      {markingIds[progress.nextEpisode.id] ? "..." : "Mark Watched ✓"}
+                                    </button>
+                                    <WatchedMenu
+                                      showTitle={show.title}
+                                      seasonNumber={progress.nextEpisode.season}
+                                      busy={bulkMarking[ids.trakt] || skipPending[progress.nextEpisode.id]}
+                                      onSkipEpisode={() =>
+                                        handleSkipEpisode(
+                                          ids.trakt,
+                                          show.ids.slug,
+                                          progress.nextEpisode!
+                                        )
+                                      }
+                                      onMarkSeason={() =>
+                                        handleMarkBulk(ids.trakt, {
+                                          showId: ids.trakt,
+                                          season: progress.nextEpisode!.season,
+                                        })
+                                      }
+                                      onMarkShow={() =>
+                                        handleMarkBulk(ids.trakt, { showId: ids.trakt })
+                                      }
+                                    />
+                                  </span>
+                                )}
                               </span>
-                            )}
-                          </span>
+                            </div>
+                          )}
+                          {progress.upcomingEpisode && progress.isFullyCaughtUp && (
+                            <div className="episode-info">
+                              <span className="episode-info-label">Upcoming</span>
+                              <span className="episode-info-value">
+                                S{String(progress.upcomingEpisode.season).padStart(2, "0")}
+                                E{String(progress.upcomingEpisode.episode).padStart(2, "0")}
+                                {" · "}{progress.upcomingEpisode.title}
+                                {progress.upcomingEpisode.runtime && ` · ${progress.upcomingEpisode.runtime}m`}
+                                {progress.upcomingEpisode.firstAired && (
+                                  <span className="air-date">
+                                    {" "}({new Date(progress.upcomingEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })})
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="episode-info-skeleton-container" style={{ display: 'flex', width: '100%', gap: 'var(--space-4)' }}>
+                          <div className="episode-info" style={{ flex: 1 }}>
+                            <span className="episode-info-label">Last watched</span>
+                            <div className="skeleton skeleton-line" style={{ width: '80%', height: '14px', marginTop: '6px', borderRadius: '4px' }} />
+                          </div>
+                          <div className="episode-info" style={{ flex: 1 }}>
+                            <span className="episode-info-label">Next to watch</span>
+                            <div className="skeleton skeleton-line" style={{ width: '85%', height: '14px', marginTop: '6px', borderRadius: '4px' }} />
+                          </div>
                         </div>
                       )}
                     </div>

@@ -59,10 +59,45 @@ export interface TraktTokens {
   created_at: number;
 }
 
+/**
+ * Helper to fetch from Trakt with automatic retry on rate limits (429).
+ */
+export async function fetchTrakt(
+  url: string,
+  options: RequestInit = {},
+  maxRetries = 5
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    try {
+      const res = await fetch(url, options);
+      if (res.status === 429 && attempt <= maxRetries) {
+        const retryAfterHeader = res.headers.get("Retry-After");
+        const delaySeconds = retryAfterHeader ? parseInt(retryAfterHeader, 10) : null;
+        const delayMs = (delaySeconds && Number.isFinite(delaySeconds) && delaySeconds > 0 
+          ? delaySeconds 
+          : Math.pow(2, attempt)) * 1000;
+        console.warn(`[Trakt API] Rate limited (429) on ${url}. Retrying attempt ${attempt}/${maxRetries} after ${delayMs}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt > maxRetries) {
+        throw err;
+      }
+      const delayMs = Math.pow(2, attempt) * 1000;
+      console.warn(`[Trakt API] Network error on ${url}. Retrying attempt ${attempt}/${maxRetries} after ${delayMs}ms...`, err);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 export async function exchangeCodeForTokens(
   code: string
 ): Promise<TraktTokens> {
-  const res = await fetch(`${TRAKT_API_BASE}/oauth/token`, {
+  const res = await fetchTrakt(`${TRAKT_API_BASE}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
     body: JSON.stringify({
@@ -85,7 +120,7 @@ export async function exchangeCodeForTokens(
 export async function refreshAccessToken(
   refreshToken: string
 ): Promise<TraktTokens> {
-  const res = await fetch(`${TRAKT_API_BASE}/oauth/token`, {
+  const res = await fetchTrakt(`${TRAKT_API_BASE}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
     body: JSON.stringify({
@@ -106,7 +141,7 @@ export async function refreshAccessToken(
 }
 
 export async function revokeToken(accessToken: string): Promise<void> {
-  await fetch(`${TRAKT_API_BASE}/oauth/revoke`, {
+  await fetchTrakt(`${TRAKT_API_BASE}/oauth/revoke`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
     body: JSON.stringify({
@@ -146,7 +181,7 @@ export interface TraktUserSettings {
 export async function fetchUserSettings(
   accessToken: string
 ): Promise<TraktUserSettings> {
-  const res = await fetch(`${TRAKT_API_BASE}/users/settings`, {
+  const res = await fetchTrakt(`${TRAKT_API_BASE}/users/settings`, {
     headers: authHeaders(accessToken),
   });
 

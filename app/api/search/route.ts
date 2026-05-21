@@ -6,6 +6,7 @@ import {
   refreshAccessToken,
   encodeTokens,
   COOKIE_NAME,
+  fetchTrakt,
 } from "@/lib/trakt";
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
   });
 
   try {
-    const res = await fetch(
+    const res = await fetchTrakt(
       `${TRAKT_API_BASE}/search/show?${params.toString()}`,
       { headers }
     );

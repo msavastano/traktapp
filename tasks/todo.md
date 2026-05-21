@@ -1,0 +1,37 @@
+# Tasks: Stream Show Enrichment Results
+
+- [x] **Phase 1: Backend Streaming API**
+  - [x] Support `?stream=true` parameter in `GET /api/watchlist`
+  - [x] Implement metadata and paging payload streaming first
+  - [x] Implement concurrency-limited worker pool for show enrichment
+  - [x] Implement stream cancel/abort handling to stop workers
+  - [x] Save complete results to cache on successful stream completion
+- [x] **Phase 2: Frontend Progressive Rendering**
+  - [x] Implement stream reader in `fetchWatchlist`
+  - [x] Support fallback to standard JSON (cache HIT)
+  - [x] Update state merging to replace unenriched shows with enriched ones
+  - [x] Add `isEnriched` and `enrichmentError` flags to local state
+  - [x] Handle safety checks in `nextUnwatchedAirTime` for unenriched shows
+- [x] **Phase 3: UI Skeleton Integration**
+  - [x] Update show card renderer in `app/dashboard/page.tsx`
+  - [x] Render shimmer skeletons for progress, episode info, and actions when `!isEnriched`
+  - [x] Verify styling is responsive and looks premium
+- [x] **Phase 4: Verification & Build**
+  - [x] Verify local execution on port 3001
+  - [x] Test stream cancellation by navigating away
+  - [x] Run `npm run lint` and `npm run build`
+
+- [x] **Phase 5: Backend API Route Updates (Use `fetchTrakt`)**
+  - [x] Update `app/api/watchlist/route.ts` (replace native `fetch` calls, reduce concurrency to 2, add 100ms throttle delay)
+  - [x] Update `app/api/recommendations/route.ts` (replace native `fetch` calls)
+  - [x] Update `app/api/next-episode/route.ts` (replace native `fetch` calls)
+  - [x] Update `app/api/history/route.ts` (replace native `fetch` calls)
+  - [x] Update `app/api/search/route.ts` (replace native `fetch` calls)
+- [x] **Phase 6: Enrichment Tuning**
+  - [x] Update `lib/enrich.ts` (reduce default concurrency to 2, add 100ms throttle delay)
+- [x] **Phase 7: Dev Server Cleanup & Verification**
+  - [x] Kill active dev server task-210
+  - [x] Clean `.next` build cache directory
+  - [x] Restart dev server on port 3000
+  - [x] Run `npm run lint` and `npm run build`
+  - [x] Verify successful OAuth login and dashboard streaming
