@@ -1,37 +1,26 @@
-# Tasks: Stream Show Enrichment Results
+# Tasks: Cohesive Premium Dark Mode
 
-- [x] **Phase 1: Backend Streaming API**
-  - [x] Support `?stream=true` parameter in `GET /api/watchlist`
-  - [x] Implement metadata and paging payload streaming first
-  - [x] Implement concurrency-limited worker pool for show enrichment
-  - [x] Implement stream cancel/abort handling to stop workers
-  - [x] Save complete results to cache on successful stream completion
-- [x] **Phase 2: Frontend Progressive Rendering**
-  - [x] Implement stream reader in `fetchWatchlist`
-  - [x] Support fallback to standard JSON (cache HIT)
-  - [x] Update state merging to replace unenriched shows with enriched ones
-  - [x] Add `isEnriched` and `enrichmentError` flags to local state
-  - [x] Handle safety checks in `nextUnwatchedAirTime` for unenriched shows
-- [x] **Phase 3: UI Skeleton Integration**
-  - [x] Update show card renderer in `app/dashboard/page.tsx`
-  - [x] Render shimmer skeletons for progress, episode info, and actions when `!isEnriched`
-  - [x] Verify styling is responsive and looks premium
-- [x] **Phase 4: Verification & Build**
-  - [x] Verify local execution on port 3001
-  - [x] Test stream cancellation by navigating away
-  - [x] Run `npm run lint` and `npm run build`
+- [x] **Phase 1: Design Tokens & CSS Variables**
+  - [x] Add dark theme overrides to `app/globals.css` using `html[data-theme="dark"]`
+  - [x] Clean up hardcoded `#fff` text colors on primary buttons/badges to use variable `var(--on-warm-brown)` and `var(--on-dark-charcoal)`
+  - [x] Update confirmation dialog confirm/destructive buttons to use variable `--accent` and `--dusty-red`
+  - [x] Add style rules for the theme toggle button with micro-animations
+- [x] **Phase 2: Theme Toggle Component**
+  - [x] Create `components/theme-toggle.tsx` with hydration-safe mounting and local storage sync
+  - [x] Integrate SVG icons for Sun/Moon with elegant transitions/hover effects
+  - [x] Add `<ThemeToggle />` into `components/navbar.tsx` actions
+- [x] **Phase 3: Prevent Flash of Light Theme**
+  - [x] Inject blocking inline theme detection script in `<head>` of `app/layout.tsx`
+- [x] **Phase 4: Verification & Polish**
+  - [x] Verify local compilation and run `npm run lint`
+  - [x] Test toggling on guest landing page and dashboard
+  - [x] Verify contrast and aesthetics of cards, badges, dialogs, and text fields in dark mode
+  - [x] Run production build `npm run build`
 
-- [x] **Phase 5: Backend API Route Updates (Use `fetchTrakt`)**
-  - [x] Update `app/api/watchlist/route.ts` (replace native `fetch` calls, reduce concurrency to 2, add 100ms throttle delay)
-  - [x] Update `app/api/recommendations/route.ts` (replace native `fetch` calls)
-  - [x] Update `app/api/next-episode/route.ts` (replace native `fetch` calls)
-  - [x] Update `app/api/history/route.ts` (replace native `fetch` calls)
-  - [x] Update `app/api/search/route.ts` (replace native `fetch` calls)
-- [x] **Phase 6: Enrichment Tuning**
-  - [x] Update `lib/enrich.ts` (reduce default concurrency to 2, add 100ms throttle delay)
-- [x] **Phase 7: Dev Server Cleanup & Verification**
-  - [x] Kill active dev server task-210
-  - [x] Clean `.next` build cache directory
-  - [x] Restart dev server on port 3000
-  - [x] Run `npm run lint` and `npm run build`
-  - [x] Verify successful OAuth login and dashboard streaming
+## Review
+
+### Verification Outcomes
+1. **Compilation & Linting**: Successfully ran `npm run lint` without errors. Wrapped state setters `setMounted` and `setTheme` within a deferred `setTimeout` block in `components/theme-toggle.tsx` to prevent cascading render warnings.
+2. **Production Build**: Successfully compiled and generated static pages with `npm run build` on the Next.js Turbopack compiler.
+3. **No FOUT (Flash of Unstyled Theme)**: Injected a blocking, inline script in `app/layout.tsx` to apply the stored/preference theme before the initial layout render. Added `suppressHydrationWarning` on the `<html>` tag to resolve hydration warning mismatches triggered by the client-side modification of `data-theme`.
+4. **Contrast & Aesthetics**: All core surface colors, button styles, badges, and outline borders are mapped to CSS variables that cleanly support both dark and light modes. Checked standard color mappings such as `--on-warm-brown`, `--on-dark-charcoal`, and `--outline-variant`.

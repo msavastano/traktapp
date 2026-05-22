@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/auth-context";
 import { UserProfile } from "./user-profile";
+import { ThemeToggle } from "./theme-toggle";
 import Link from "next/link";
 
 export function Navbar() {
@@ -15,6 +16,7 @@ export function Navbar() {
       </Link>
 
       <div className="navbar-actions">
+        <ThemeToggle />
         {!isLoading && isAuthenticated && <UserProfile />}
       </div>
     </nav>
