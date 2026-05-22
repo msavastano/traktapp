@@ -183,7 +183,6 @@ export async function enrichWatchlistItem(
     needsImages ? fetchShowImages(slug, accessToken) : Promise.resolve(null),
   ]);
   const show = images ? { ...item.show, images } : item.show;
-
   const aired = progress?.aired ?? 0;
   const completed = progress?.completed ?? 0;
   const unwatchedCount = Math.max(0, aired - completed);
@@ -196,6 +195,19 @@ export async function enrichWatchlistItem(
       completed: s.completed,
       isFullyWatched: s.completed >= s.aired,
     }));
+
+  const watchedEpisodes: Record<string, boolean> = {};
+  if (progress?.seasons) {
+    for (const season of progress.seasons) {
+      if (season.episodes) {
+        for (const ep of season.episodes) {
+          if (ep.completed) {
+            watchedEpisodes[`${season.number}-${ep.number}`] = true;
+          }
+        }
+      }
+    }
+  }
 
   // Find the currently-releasing season: a season that has started airing
   // (aired_episodes > 0) but isn't fully aired yet. Skips seasons that
@@ -246,6 +258,7 @@ export async function enrichWatchlistItem(
       nextEpisode: toNextEpisodeInfo(nextEp, show.runtime),
       upcomingEpisode: toNextEpisodeInfo(nextEp, show.runtime),
       upcomingInSeason,
+      watchedEpisodes,
     },
     trackingStatus: status,
     statusLabel: label,

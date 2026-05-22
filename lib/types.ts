@@ -176,6 +176,8 @@ export interface TrackedShow {
      * episodes are scheduled but not yet aired. Null if every season is
      * fully aired or no upcoming episodes are known. */
     upcomingInSeason: { season: number; remaining: number } | null;
+    /** Map of watched episodes in the format "season-episode" -> true */
+    watchedEpisodes?: Record<string, boolean>;
   };
 
   // --- Computed status ---

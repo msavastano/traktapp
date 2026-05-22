@@ -26,10 +26,10 @@ interface WatchlistResponse {
   };
 }
 
-type Tab = "tracking" | "watchlist";
+type Tab = "tracking" | "watchlist" | "calendar";
 type Filter = "all" | "upcoming" | "waiting" | "behind" | "completed";
 
-const VALID_TABS: Tab[] = ["tracking", "watchlist"];
+const VALID_TABS: Tab[] = ["tracking", "watchlist", "calendar"];
 const VALID_FILTERS: Filter[] = ["all", "upcoming", "waiting", "behind", "completed"];
 
 const RAW_STORAGE_KEY = "dashboard.showRaw";
@@ -74,6 +74,251 @@ function DashboardInner() {
   const [newsOpenFor, setNewsOpenFor] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [filter, setFilter] = useState<Filter>(initialFilter);
+
+  // Calendar feature states & helpers
+  interface CalendarItem {
+    first_aired: string;
+    episode: {
+      season: number;
+      number: number;
+      title: string;
+      ids: {
+        trakt: number;
+        tvdb: number | null;
+        imdb: string | null;
+        tmdb: number | null;
+      };
+      overview?: string;
+      runtime?: number;
+    };
+    show: {
+      title: string;
+      year: number | null;
+      ids: {
+        trakt: number;
+        slug: string;
+        tvdb: number | null;
+        imdb: string | null;
+        tmdb: number | null;
+      };
+    };
+  }
+
+  const [calendarEpisodes, setCalendarEpisodes] = useState<CalendarItem[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  });
+
+  const getCalendarDays = () => {
+    const days: { dateStr: string; label: string; dateNum: string; dayName: string; monthStr: string }[] = [];
+    const base = new Date();
+    for (let i = -3; i <= 7; i++) {
+      const d = new Date();
+      d.setDate(base.getDate() + i);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+      
+      const dayName = d.toLocaleDateString("en-US", { weekday: "short" });
+      const monthStr = d.toLocaleDateString("en-US", { month: "short" });
+      const dateNum = String(d.getDate());
+      const label = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      
+      days.push({ dateStr, label, dateNum, dayName, monthStr });
+    }
+    return days;
+  };
+
+  const daysList = useMemo(() => getCalendarDays(), []);
+
+  const selectedMonthTitle = useMemo(() => {
+    if (!selectedDate) return "";
+    const parts = selectedDate.split("-");
+    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  }, [selectedDate]);
+
+  const calendarGroupedByDate = useMemo(() => {
+    const groups: Record<string, CalendarItem[]> = {};
+    for (const item of calendarEpisodes) {
+      if (!item.first_aired) continue;
+      const d = new Date(item.first_aired);
+      if (isNaN(d.getTime())) continue;
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateKey = `${year}-${month}-${day}`;
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(item);
+    }
+    return groups;
+  }, [calendarEpisodes]);
+
+  const countEpisodesForDate = (dateStr: string) => {
+    return calendarGroupedByDate[dateStr]?.length || 0;
+  };
+
+  const findCalendarPoster = (calendarShowId: number): string | null => {
+    const matched = shows.find((s) => s.show.ids.trakt === calendarShowId);
+    if (!matched) return null;
+    return posterUrl(matched);
+  };
+
+  const isEpisodeWatched = (showId: number, season: number, number: number): boolean => {
+    const matched = shows.find((s) => s.show.ids.trakt === showId);
+    if (!matched || !matched.progress?.watchedEpisodes) return false;
+    const key = `${season}-${number}`;
+    return !!matched.progress.watchedEpisodes[key];
+  };
+
+  const fetchCalendar = async (silent = false) => {
+    if (!silent) setCalendarLoading(true);
+    try {
+      const localToday = new Date();
+      const localThreeDaysAgo = new Date(localToday);
+      localThreeDaysAgo.setDate(localToday.getDate() - 3);
+      const start_date = `${localThreeDaysAgo.getFullYear()}-${String(localThreeDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(localThreeDaysAgo.getDate()).padStart(2, '0')}`;
+      
+      const res = await fetch(`/api/calendar?start_date=${start_date}&days=11`);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch calendar: ${res.status}`);
+      }
+      const data = await res.json();
+      setCalendarEpisodes(data);
+    } catch (err) {
+      console.error("fetchCalendar error:", err);
+    } finally {
+      if (!silent) setCalendarLoading(false);
+    }
+  };
+
+  const optimisticMarkCalendarEpisode = (showId: number, season: number, episodeNumber: number) => {
+    setShows((prev) =>
+      prev.map((s) => {
+        if (s.show.ids.trakt !== showId) return s;
+        const watchedEpisodes = { ...(s.progress.watchedEpisodes || {}) };
+        watchedEpisodes[`${season}-${episodeNumber}`] = true;
+        
+        let newCompleted = s.progress.completed;
+        const key = `${season}-${episodeNumber}`;
+        if (!s.progress.watchedEpisodes || !s.progress.watchedEpisodes[key]) {
+          newCompleted += 1;
+        }
+        const newUnwatched = Math.max(0, s.progress.unwatchedCount - 1);
+        const newPercent =
+          s.progress.aired > 0
+            ? Math.round((newCompleted / s.progress.aired) * 100)
+            : 0;
+            
+        const isNext = s.progress.nextEpisode?.season === season && s.progress.nextEpisode?.episode === episodeNumber;
+        
+        return {
+          ...s,
+          progress: {
+            ...s.progress,
+            completed: newCompleted,
+            unwatchedCount: newUnwatched,
+            percentWatched: newPercent,
+            isFullyCaughtUp: newCompleted >= s.progress.aired,
+            nextEpisode: isNext ? null : s.progress.nextEpisode,
+            watchedEpisodes,
+          },
+        };
+      })
+    );
+  };
+
+  const handleMarkCalendarEpisode = async (
+    showId: number,
+    slug: string,
+    episodeId: number,
+    season: number,
+    episodeNumber: number
+  ) => {
+    setMarkingIds((prev) => ({ ...prev, [episodeId]: true }));
+    optimisticMarkCalendarEpisode(showId, season, episodeNumber);
+    try {
+      const res = await fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ episodeId }),
+      });
+      if (!res.ok) console.error("Failed to mark as watched");
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setMarkingIds((prev) => ({ ...prev, [episodeId]: false }));
+      fetchWatchlist(true);
+    }
+  };
+
+  const handleDayClick = (dateStr: string) => {
+    setSelectedDate(dateStr);
+    const element = document.getElementById(`date-group-${dateStr}`);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handlePrevDay = () => {
+    const idx = daysList.findIndex(d => d.dateStr === selectedDate);
+    if (idx > 0) {
+      handleDayClick(daysList[idx - 1].dateStr);
+    }
+  };
+
+  const handleNextDay = () => {
+    const idx = daysList.findIndex(d => d.dateStr === selectedDate);
+    if (idx < daysList.length - 1) {
+      handleDayClick(daysList[idx + 1].dateStr);
+    }
+  };
+
+  const handleToday = () => {
+    const todayStr = (() => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    })();
+    const exists = daysList.some(d => d.dateStr === todayStr);
+    if (exists) {
+      handleDayClick(todayStr);
+    }
+  };
+
+  const getLocalTodayDateString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const getAirTimeStr = (firstAiredStr?: string | null) => {
+    if (!firstAiredStr) return "";
+    const d = new Date(firstAiredStr);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const isEpisodeAired = (firstAiredStr?: string | null) => {
+    if (!firstAiredStr) return false;
+    const d = new Date(firstAiredStr);
+    return d.getTime() <= Date.now();
+  };
   // Ephemeral skip map — survives refetches within a session but not page reload.
   // Trakt has no native skip concept, so skips are client-only.
   // Maps: skipped episode id -> the next episode we advanced the user to.
@@ -575,6 +820,12 @@ function DashboardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    if (isAuthenticated && activeTab === "calendar") {
+      fetchCalendar();
+    }
+  }, [isAuthenticated, activeTab]);
+
   const existingShowIds = useMemo(
     () => new Set(shows.map((s) => s.show.ids.trakt).filter(Boolean) as number[]),
     [shows]
@@ -684,16 +935,25 @@ function DashboardInner() {
 
         <div className="dashboard-tabs">
           <button 
+            type="button"
             className={`tab-btn ${activeTab === "tracking" ? "active" : ""}`}
             onClick={() => setActiveTab("tracking")}
           >
             Tracking ({trackingShows.length})
           </button>
           <button 
+            type="button"
             className={`tab-btn ${activeTab === "watchlist" ? "active" : ""}`}
             onClick={() => setActiveTab("watchlist")}
           >
             Watchlist ({watchlistShows.length})
+          </button>
+          <button 
+            type="button"
+            className={`tab-btn ${activeTab === "calendar" ? "active" : ""}`}
+            onClick={() => setActiveTab("calendar")}
+          >
+            Calendar
           </button>
         </div>
 
@@ -754,10 +1014,223 @@ function DashboardInner() {
 
         <section className="watchlist-section">
           <h2 className="section-title">
-            {activeTab === "tracking" ? "Up Next" : "Plan to Watch"}
+            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : "Calendar"}
           </h2>
 
-          {watchlistLoading ? (
+          {activeTab === "calendar" ? (
+            calendarLoading ? (
+              <div className="watchlist-grid" aria-busy="true" aria-label="Loading calendar">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="skeleton-card">
+                    <div className="skeleton skeleton-poster" />
+                    <div className="skeleton-body">
+                      <div className="skeleton skeleton-line title" />
+                      <div className="skeleton skeleton-line" />
+                      <div className="skeleton skeleton-line medium" />
+                      <div className="skeleton skeleton-line bar" />
+                      <div className="skeleton skeleton-line short" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : calendarEpisodes.length === 0 ? (
+              <div className="coming-soon">
+                <div className="coming-soon-icon">📅</div>
+                <h3 className="coming-soon-title">No scheduled episodes</h3>
+                <p className="coming-soon-desc">
+                  No episodes found in your calendar for the next 7 days or past 3 days.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Horizontal Date Picker */}
+                <div className="calendar-picker-container">
+                  <div className="calendar-picker">
+                    <div className="calendar-picker-header">
+                      <div className="calendar-month-title">{selectedMonthTitle}</div>
+                      <div className="calendar-nav-controls">
+                        <button
+                          type="button"
+                          className="calendar-nav-btn"
+                          onClick={handlePrevDay}
+                          disabled={daysList.findIndex(d => d.dateStr === selectedDate) === 0}
+                          aria-label="Previous day"
+                        >
+                          &lt;
+                        </button>
+                        <button
+                          type="button"
+                          className="calendar-today-btn"
+                          onClick={handleToday}
+                        >
+                          Today
+                        </button>
+                        <button
+                          type="button"
+                          className="calendar-nav-btn"
+                          onClick={handleNextDay}
+                          disabled={daysList.findIndex(d => d.dateStr === selectedDate) === daysList.length - 1}
+                          aria-label="Next day"
+                        >
+                          &gt;
+                        </button>
+                      </div>
+                    </div>
+                    <div className="calendar-days">
+                      {daysList.map((day) => {
+                        const epCount = countEpisodesForDate(day.dateStr);
+                        const isActive = day.dateStr === selectedDate;
+                        return (
+                          <button
+                            key={day.dateStr}
+                            type="button"
+                            className={`calendar-day-btn ${isActive ? "active" : ""}`}
+                            onClick={() => handleDayClick(day.dateStr)}
+                          >
+                            <span className="calendar-day-month">{day.monthStr}</span>
+                            <span className="calendar-day-number">{day.dateNum}</span>
+                            <span className="calendar-day-name">{day.dayName}</span>
+                            <div className="calendar-dots">
+                              {Array.from({ length: Math.min(epCount, 3) }).map((_, i) => (
+                                <span key={i} className="calendar-dot" />
+                              ))}
+                              {epCount > 3 && (
+                                <span style={{ fontSize: "8px", fontWeight: "bold", color: "var(--muted)", lineHeight: 1 }}>+</span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Grouped Episode List */}
+                <div className="calendar-view">
+                  {daysList.map((day) => {
+                    const eps = calendarGroupedByDate[day.dateStr] || [];
+                    const isToday = day.dateStr === getLocalTodayDateString();
+                    
+                    const parts = day.dateStr.split("-");
+                    const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                    const headerTitle = d.toLocaleDateString("en-US", {
+                      weekday: "long",
+                      month: "long",
+                      day: "numeric",
+                    });
+
+                    return (
+                      <div
+                        key={day.dateStr}
+                        id={`date-group-${day.dateStr}`}
+                        className="calendar-date-group"
+                      >
+                        <div className="calendar-date-header">
+                          <span>{headerTitle}</span>
+                          {isToday && <span className="calendar-date-header-today">Today</span>}
+                        </div>
+
+                        {eps.length === 0 ? (
+                          <div className="coming-soon" style={{ padding: "var(--space-6)" }}>
+                            <p className="coming-soon-desc">No episodes scheduled for this day.</p>
+                          </div>
+                        ) : (
+                          <div className="calendar-episode-grid">
+                            {eps.map((item, idx) => {
+                              const poster = findCalendarPoster(item.show.ids.trakt);
+                              const isWatched = isEpisodeWatched(
+                                item.show.ids.trakt,
+                                item.episode.season,
+                                item.episode.number
+                              );
+                              const isAired = isEpisodeAired(item.first_aired);
+                              const airTimeStr = getAirTimeStr(item.first_aired);
+
+                              return (
+                                <div
+                                  key={`${item.episode.ids.trakt}-${idx}`}
+                                  className="watchlist-card"
+                                >
+                                  <div className="watchlist-card-poster">
+                                    {poster ? (
+                                      <Image
+                                        src={poster}
+                                        alt={`${item.show.title} poster`}
+                                        width={120}
+                                        height={180}
+                                        sizes="(max-width: 768px) 96px, 120px"
+                                      />
+                                    ) : (
+                                      <div className="poster-placeholder" aria-hidden>📺</div>
+                                    )}
+                                    {airTimeStr && (
+                                      <div className="poster-time-badge">{airTimeStr}</div>
+                                    )}
+                                  </div>
+
+                                  <div className="watchlist-card-body">
+                                    <div className="watchlist-card-header">
+                                      <div className="watchlist-card-title-row">
+                                        <h3 className="watchlist-card-title">
+                                          {item.show.title || "Unknown"}
+                                        </h3>
+                                        {item.show.year && (
+                                          <span className="watchlist-card-year">{item.show.year}</span>
+                                        )}
+                                      </div>
+                                      {isWatched && (
+                                        <span className="watched-check-icon">✓</span>
+                                      )}
+                                    </div>
+
+                                    <div className="calendar-card-episode-info">
+                                      S{String(item.episode.season).padStart(2, "0")}
+                                      E{String(item.episode.number).padStart(2, "0")}
+                                      {" · "}
+                                      <span className="calendar-card-episode-title">
+                                        {item.episode.title || `Episode ${item.episode.number}`}
+                                      </span>
+                                    </div>
+
+                                    {item.episode.overview && (
+                                      <p className="watchlist-card-overview">
+                                        {item.episode.overview}
+                                      </p>
+                                    )}
+
+                                    <div className="episode-info-row" style={{ marginTop: "auto", borderTop: "none", paddingTop: 0 }}>
+                                      {!isWatched && isAired && (
+                                        <button
+                                          type="button"
+                                          className="mark-watched-btn"
+                                          disabled={markingIds[item.episode.ids.trakt]}
+                                          onClick={() =>
+                                            handleMarkCalendarEpisode(
+                                              item.show.ids.trakt,
+                                              item.show.ids.slug,
+                                              item.episode.ids.trakt,
+                                              item.episode.season,
+                                              item.episode.number
+                                            )
+                                          }
+                                        >
+                                          {markingIds[item.episode.ids.trakt] ? "..." : "Mark Watched ✓"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )
+          ) : watchlistLoading ? (
             <div className="watchlist-grid" aria-busy="true" aria-label="Loading watchlist">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="skeleton-card">
