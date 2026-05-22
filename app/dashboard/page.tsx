@@ -810,6 +810,24 @@ function DashboardInner() {
                   statusLower === "planned";
                 const showNewsButton = isEnriched && newsEligibleStatus && !hasKnownAirDate;
 
+                let displayStatusLabel = statusLabel;
+                if (
+                  trackingStatus === "waiting_new_episodes" &&
+                  isEnriched &&
+                  progress?.upcomingEpisode?.firstAired
+                ) {
+                  const airDate = new Date(progress.upcomingEpisode.firstAired);
+                  const dateStr = airDate.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  });
+                  const timeStr = airDate.toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  });
+                  displayStatusLabel = `Caught up · Next episode ${dateStr} at ${timeStr}`;
+                }
+
                 return (
                   <div
                     key={ids.trakt || index}
@@ -841,7 +859,7 @@ function DashboardInner() {
                         )}
                       </div>
                       <span className={`tracking-status-badge status-${trackingStatus}`}>
-                        {statusLabel}
+                        {displayStatusLabel}
                       </span>
                     </div>
 
@@ -974,7 +992,7 @@ function DashboardInner() {
                                 {progress.nextEpisode.runtime && ` · ${progress.nextEpisode.runtime}m`}
                                 {progress.nextEpisode.firstAired && !progress.nextEpisode.isAired && (
                                   <span className="air-date">
-                                    {" "}(airs {new Date(progress.nextEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })})
+                                    {" "}(airs {new Date(progress.nextEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })} at {new Date(progress.nextEpisode.firstAired).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })})
                                   </span>
                                 )}
                                 {progress.nextEpisode.isAired && (
@@ -1022,7 +1040,7 @@ function DashboardInner() {
                                 {progress.upcomingEpisode.runtime && ` · ${progress.upcomingEpisode.runtime}m`}
                                 {progress.upcomingEpisode.firstAired && (
                                   <span className="air-date">
-                                    {" "}({new Date(progress.upcomingEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })})
+                                    {" "}({new Date(progress.upcomingEpisode.firstAired).toLocaleDateString("en-US", { month: "short", day: "numeric" })} at {new Date(progress.upcomingEpisode.firstAired).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })})
                                   </span>
                                 )}
                               </span>
