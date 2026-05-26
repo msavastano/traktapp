@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const MODEL = "gemini-3.1-flash-lite-preview";
+const MODEL = "gemini-3.1-flash-lite";
 
 let client: GoogleGenAI | null = null;
 function getClient(): GoogleGenAI {
