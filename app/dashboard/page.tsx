@@ -834,13 +834,21 @@ function DashboardInner() {
   // Air date of the next unwatched episode (past or future).
   // Falls back to the globally-upcoming episode for caught-up shows where
   // Trakt's progress.next_episode is null but a future ep is scheduled.
+  // For shows that haven't aired yet (no episode air date known), falls back
+  // to the show's first_aired premiere date when it's in the future.
   // Returns null if no air date is known (e.g. all episodes watched).
   const nextUnwatchedAirTime = (s: TrackedShow): number | null => {
     if (!s.progress) return null;
-    const candidate =
+    let candidate =
       s.progress.nextEpisode?.firstAired ??
       s.progress.upcomingEpisode?.firstAired ??
       null;
+    if (!candidate && s.show.first_aired) {
+      const premiere = new Date(s.show.first_aired).getTime();
+      if (Number.isFinite(premiere) && premiere > now) {
+        candidate = s.show.first_aired;
+      }
+    }
     if (!candidate) return null;
     const t = new Date(candidate).getTime();
     return Number.isFinite(t) ? t : null;
@@ -1519,6 +1527,21 @@ function DashboardInner() {
                               </span>
                             </div>
                           )}
+                          {/* Show hasn't aired yet: no episode air date known, but the
+                              show has a future first_aired premiere date. */}
+                          {!progress.nextEpisode &&
+                            !progress.upcomingEpisode &&
+                            show.first_aired &&
+                            new Date(show.first_aired).getTime() > now && (
+                              <div className="episode-info">
+                                <span className="episode-info-label">Premieres</span>
+                                <span className="episode-info-value">
+                                  {new Date(show.first_aired).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                  {" at "}
+                                  {new Date(show.first_aired).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                                </span>
+                              </div>
+                            )}
                         </>
                       ) : (
                         <div className="episode-info-skeleton-container" style={{ display: 'flex', width: '100%', gap: 'var(--space-4)' }}>
