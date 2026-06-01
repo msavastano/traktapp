@@ -143,6 +143,13 @@ export interface TrackedShow {
   // --- Show metadata ---
   show: TraktShow;
 
+  /**
+   * Rotten Tomatoes critic score (Tomatometer, 0-100) from OMDb.
+   * Optional enrichment — null/undefined when unavailable (no API key, rate
+   * limit, or no RT rating exists). UI omits the badge when absent.
+   */
+  rtScore?: number | null;
+
   // --- Progress ---
   progress: {
     /** Total episodes that have aired */

@@ -42,4 +42,4 @@ next-env.d.ts
 
 **/trakt_mcpserver/*
 
-.claude/settings.local.json
+**/settings.local.json

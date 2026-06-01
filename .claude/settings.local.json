@@ -9,7 +9,8 @@
       "Bash(node *)",
       "Bash(grep -E -A2 \"\\(watchlist\\\\\\\\\\\\\\\\route|dashboard\\\\\\\\\\\\\\\\page\\)\")",
       "Bash(git stash *)",
-      "Bash(grep -A1 \"news-modal\\\\|api[/\\\\\\\\\\\\\\\\]news\\\\|dashboard[/\\\\\\\\\\\\\\\\]page\")"
+      "Bash(grep -A1 \"news-modal\\\\|api[/\\\\\\\\\\\\\\\\]news\\\\|dashboard[/\\\\\\\\\\\\\\\\]page\")",
+      "PowerShell($p = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if \\($p\\) { $p | ForEach-Object { Stop-Process -Id $_ -Force; Write-Output \"Killed PID $_\" } } else { Write-Output \"Nothing on port 3000\" })"
     ]
   }
 }

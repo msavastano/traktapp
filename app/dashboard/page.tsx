@@ -1274,7 +1274,7 @@ function DashboardInner() {
           ) : (
             <div className="watchlist-grid">
               {displayedShows.map((tracked, index) => {
-                const { show, progress, trackingStatus, statusLabel, isEnriched } = tracked;
+                const { show, progress, trackingStatus, statusLabel, isEnriched, rtScore } = tracked;
                 const ids = show.ids;
 
                 const hasKnownAirDate = isEnriched && progress
@@ -1423,6 +1423,14 @@ function DashboardInner() {
                       {show.rating && (
                         <span className="watchlist-meta-item">
                           ⭐ {show.rating.toFixed(1)}
+                        </span>
+                      )}
+                      {typeof rtScore === "number" && (
+                        <span
+                          className="watchlist-meta-item"
+                          title="Rotten Tomatoes (critics)"
+                        >
+                          {rtScore >= 60 ? "🍅" : "🤢"} {rtScore}%
                         </span>
                       )}
                     </div>
