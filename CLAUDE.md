@@ -19,10 +19,6 @@ Trakt OAuth credentials must be set (e.g. in `.env.local`):
 - `TRAKT_CLIENT_SECRET` — used for token exchange/refresh/revoke
 - `NEXT_PUBLIC_TRAKT_REDIRECT_URI` — must match the Trakt app's redirect (typically `http://localhost:3000/api/auth/callback`)
 
-Optional:
-
-- `OMDB_API_KEY` — OMDb API key for Rotten Tomatoes critic scores (`lib/omdb.ts`). Optional enrichment: if unset (or rate-limited), RT scores are silently omitted and never error. Free tier is 1000 req/day; scores are cached 24h per IMDb id with a process-level circuit breaker on quota exhaustion.
-
 ## Architecture
 
 Next.js 16 App Router app (React 19, TypeScript, no CSS framework — global CSS only). Path alias `@/*` → repo root.

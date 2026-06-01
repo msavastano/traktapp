@@ -19,7 +19,6 @@ import type {
   NextEpisodeInfo,
 } from "./types";
 import { fetchTrakt } from "./trakt";
-import { fetchRtScore } from "./omdb";
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
 const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
@@ -178,11 +177,10 @@ export async function enrichWatchlistItem(
 ): Promise<TrackedShow> {
   const slug = item.show.ids.slug;
   const needsImages = !item.show.images?.poster?.length;
-  const [progress, seasonsRaw, images, rtScore] = await Promise.all([
+  const [progress, seasonsRaw, images] = await Promise.all([
     fetchProgress(slug, accessToken),
     fetchSeasons(slug, accessToken),
     needsImages ? fetchShowImages(slug, accessToken) : Promise.resolve(null),
-    fetchRtScore(item.show.ids.imdb),
   ]);
   const show = images ? { ...item.show, images } : item.show;
   const aired = progress?.aired ?? 0;
@@ -245,7 +243,6 @@ export async function enrichWatchlistItem(
   return {
     listedAt: item.listed_at,
     show,
-    rtScore,
     progress: {
       aired,
       completed,
