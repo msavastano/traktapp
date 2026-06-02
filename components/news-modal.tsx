@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  GEMINI_KEY_HEADER,
+  MISSING_KEY_ERROR,
+  getStoredGeminiKey,
+} from "@/lib/gemini-key";
+import { GeminiKeyModal } from "./gemini-key-modal";
 
 interface NewsSource {
   uri: string;
@@ -28,6 +34,8 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<NewsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [needsKey, setNeedsKey] = useState(false);
+  const [keyModalOpen, setKeyModalOpen] = useState(false);
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -55,15 +63,29 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
   }, [onClose]);
 
   const fetchNews = (force = false) => {
+    const apiKey = getStoredGeminiKey();
+    if (!apiKey) {
+      setLoading(false);
+      setError(null);
+      setNeedsKey(true);
+      return;
+    }
+    setNeedsKey(false);
     setLoading(true);
     setError(null);
     const params = new URLSearchParams({ title: showTitle });
     if (showYear) params.set("year", String(showYear));
     if (force) params.set("refresh", "1");
-    fetch(`/api/news?${params.toString()}`)
+    fetch(`/api/news?${params.toString()}`, {
+      headers: { [GEMINI_KEY_HEADER]: apiKey },
+    })
       .then(async (res) => {
         const json: NewsResponse = await res.json();
         if (!res.ok) {
+          if (json.error === MISSING_KEY_ERROR) {
+            setNeedsKey(true);
+            return;
+          }
           throw new Error(json.error || `Request failed (${res.status})`);
         }
         setData(json);
@@ -79,6 +101,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setData(null);
     setError(null);
+    setNeedsKey(false);
     fetchNews(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, showTitle, showYear]);
@@ -107,6 +130,21 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
         </div>
 
         <div className="news-dialog-content">
+          {needsKey && !loading && (
+            <div className="news-dialog-error">
+              <p>
+                The latest-news search uses your own free Gemini API key. Add one
+                to continue.
+              </p>
+              <button
+                type="button"
+                className="confirm-dialog-btn confirm-dialog-confirm"
+                onClick={() => setKeyModalOpen(true)}
+              >
+                🔑 Add API key
+              </button>
+            </div>
+          )}
           {loading && (
             <div className="news-dialog-loading">
               <div className="loading-spinner" />
@@ -171,6 +209,12 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
           )}
         </div>
       </div>
+
+      <GeminiKeyModal
+        open={keyModalOpen}
+        onClose={() => setKeyModalOpen(false)}
+        onSaved={() => fetchNews(false)}
+      />
     </dialog>
   );
 }

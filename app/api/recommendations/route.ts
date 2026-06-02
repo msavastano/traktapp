@@ -9,6 +9,7 @@ import {
   fetchTrakt,
 } from "@/lib/trakt";
 import { generateRecommendations, TasteShow, GeminiRecommendation } from "@/lib/gemini";
+import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
 import type { TraktShow } from "@/lib/types";
 
 const TRAKT_API_BASE = "https://api.trakt.tv";
@@ -32,6 +33,14 @@ export async function GET(req: NextRequest) {
 
   if (!encoded) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const geminiKey = req.headers.get(GEMINI_KEY_HEADER)?.trim();
+  if (!geminiKey) {
+    return NextResponse.json(
+      { error: MISSING_KEY_ERROR, detail: "Add your Gemini API key to get AI recommendations." },
+      { status: 400 }
+    );
   }
 
   let tokens = decodeTokens(encoded);
@@ -130,7 +139,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const recs = await generateRecommendations(taste, 12);
+    const recs = await generateRecommendations(geminiKey, taste, 12);
 
     // Enrich each rec with Trakt show data (poster, ids, etc.)
     const excludedTitles = new Set(taste.map((t) => t.title.toLowerCase()));
