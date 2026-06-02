@@ -8,6 +8,7 @@ import {
   COOKIE_NAME,
 } from "@/lib/trakt";
 import { generateShowNews, ShowNews } from "@/lib/gemini";
+import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
 
 interface CacheEntry {
   generatedAt: number;
@@ -26,6 +27,14 @@ export async function GET(req: NextRequest) {
   const encoded = cookieStore.get(COOKIE_NAME)?.value;
   if (!encoded) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const geminiKey = req.headers.get(GEMINI_KEY_HEADER)?.trim();
+  if (!geminiKey) {
+    return NextResponse.json(
+      { error: MISSING_KEY_ERROR, detail: "Add your Gemini API key to fetch the latest news." },
+      { status: 400 }
+    );
   }
 
   let tokens = decodeTokens(encoded);
@@ -73,6 +82,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await generateShowNews(
+      geminiKey,
       title,
       Number.isFinite(year) ? (year as number) : null
     );

@@ -2,15 +2,14 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const MODEL = "gemini-3.1-flash-lite";
 
-let client: GoogleGenAI | null = null;
-function getClient(): GoogleGenAI {
-  if (client) return client;
-  const apiKey = process.env.GEMINI_API_KEY;
+// Bring-your-own-key: callers pass the end user's Gemini API key (entered in the
+// browser and forwarded per request). A new client is created per key so keys
+// are never shared or cached across users.
+function getClient(apiKey: string): GoogleGenAI {
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set");
+    throw new Error("A Gemini API key is required");
   }
-  client = new GoogleGenAI({ apiKey });
-  return client;
+  return new GoogleGenAI({ apiKey });
 }
 
 export interface TasteShow {
@@ -80,10 +79,11 @@ Rules:
 }
 
 export async function generateRecommendations(
+  apiKey: string,
   taste: TasteShow[],
   count: number = 12
 ): Promise<GeminiRecommendation[]> {
-  const ai = getClient();
+  const ai = getClient(apiKey);
   const response = await ai.models.generateContent({
     model: MODEL,
     contents: buildPrompt(taste, count),
@@ -114,10 +114,11 @@ export interface ShowNews {
 }
 
 export async function generateShowNews(
+  apiKey: string,
   title: string,
   year: number | null
 ): Promise<ShowNews> {
-  const ai = getClient();
+  const ai = getClient(apiKey);
   const today = new Date().toISOString().slice(0, 10);
   const prompt = `Search the web for the latest news about the TV show "${title}"${year ? ` (${year})` : ""}. Today's date is ${today}.
 

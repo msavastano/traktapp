@@ -6,6 +6,12 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import type { TraktShow } from "@/lib/types";
+import {
+  GEMINI_KEY_HEADER,
+  MISSING_KEY_ERROR,
+  getStoredGeminiKey,
+} from "@/lib/gemini-key";
+import { GeminiKeyModal } from "@/components/gemini-key-modal";
 
 interface RecommendationCard {
   title: string;
@@ -37,14 +43,32 @@ export default function RecommendationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [addingIds, setAddingIds] = useState<Record<number, boolean>>({});
   const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
+  const [keyModalOpen, setKeyModalOpen] = useState(false);
+  const [needsKey, setNeedsKey] = useState(false);
 
   const fetchRecs = (refresh = false) => {
+    const apiKey = getStoredGeminiKey();
+    if (!apiKey) {
+      setLoading(false);
+      setNeedsKey(true);
+      setKeyModalOpen(true);
+      return;
+    }
+    setNeedsKey(false);
     setLoading(true);
     setError(null);
-    fetch(`/api/recommendations${refresh ? "?refresh=1" : ""}`)
+    fetch(`/api/recommendations${refresh ? "?refresh=1" : ""}`, {
+      headers: { [GEMINI_KEY_HEADER]: apiKey },
+    })
       .then(async (res) => {
         const json = (await res.json()) as RecResponse;
         if (!res.ok) {
+          if (json.error === MISSING_KEY_ERROR) {
+            setNeedsKey(true);
+            setKeyModalOpen(true);
+            setData(null);
+            return;
+          }
           setError(json.detail || json.error || "Failed to load");
           setData(null);
         } else {
@@ -121,7 +145,23 @@ export default function RecommendationsPage() {
         </div>
 
         <section className="watchlist-section">
-          {loading ? (
+          {needsKey ? (
+            <div className="coming-soon">
+              <div className="coming-soon-icon">🔑</div>
+              <h3 className="coming-soon-title">Add your Gemini API key</h3>
+              <p className="coming-soon-desc">
+                AI recommendations run on your own free Gemini API key. Add one to
+                get started.
+              </p>
+              <button
+                className="mark-watched-btn"
+                style={{ marginTop: "1rem" }}
+                onClick={() => setKeyModalOpen(true)}
+              >
+                🔑 Add API key
+              </button>
+            </div>
+          ) : loading ? (
             <div className="watchlist-loading">
               <div className="loading-spinner" />
               <p className="loading-text">Asking Gemini for picks…</p>
@@ -240,6 +280,12 @@ export default function RecommendationsPage() {
           )}
         </section>
       </div>
+
+      <GeminiKeyModal
+        open={keyModalOpen}
+        onClose={() => setKeyModalOpen(false)}
+        onSaved={() => fetchRecs(false)}
+      />
     </div>
   );
 }
