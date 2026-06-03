@@ -81,13 +81,23 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     if (error instanceof RateLimitError) {
       const retryAfterSec = Math.ceil(error.retryAfterMs / 1000);
+      const headers: Record<string, string> = {};
+      if (error.retryAfterMs > 0) headers["Retry-After"] = String(retryAfterSec);
       return NextResponse.json(
         {
           error: error.message,
-          detail: `Free-tier Gemini search quota hit. Retry in ~${retryAfterSec}s.`,
+          detail:
+            error.scope === "per-day"
+              ? "Daily quota — resets at midnight Pacific."
+              : error.retryable
+                ? `Retry in ~${retryAfterSec}s.`
+                : "Web search grounding likely needs billing enabled on the key.",
+          scope: error.scope,
+          quotaId: error.quotaId,
+          retryable: error.retryable,
           retryAfterMs: error.retryAfterMs,
         },
-        { status: 429, headers: { "Retry-After": String(retryAfterSec) } }
+        { status: 429, headers }
       );
     }
     console.error("News fetch error:", error);

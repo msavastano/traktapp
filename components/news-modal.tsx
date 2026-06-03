@@ -21,6 +21,9 @@ interface NewsResponse {
   error?: string;
   detail?: string;
   retryAfterMs?: number;
+  retryable?: boolean;
+  scope?: "per-minute" | "per-day" | "unknown";
+  quotaId?: string;
 }
 
 interface Props {
@@ -91,8 +94,11 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
             return;
           }
           if (res.status === 429) {
-            const delay = json.retryAfterMs ?? 30_000;
-            if (!autoRetried.current) {
+            const delay = json.retryAfterMs ?? 0;
+            // Only auto-retry when the server says it's worth it (short
+            // per-minute delay). Daily caps / grounding-disabled => just show
+            // the reason; a 30s retry would be pointless.
+            if (json.retryable && delay > 0 && !autoRetried.current) {
               autoRetried.current = true;
               const sec = Math.ceil(delay / 1000);
               setError(
@@ -102,7 +108,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
               return;
             }
             throw new Error(
-              json.detail || json.error || "Rate limited. Try again shortly."
+              json.error || json.detail || "Rate limited. Try again later."
             );
           }
           throw new Error(json.error || `Request failed (${res.status})`);

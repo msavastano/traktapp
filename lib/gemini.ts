@@ -6,10 +6,26 @@ const MODEL = "gemini-3.1-flash-lite";
 // (ms) parsed from the API's RetryInfo so callers can surface it to the user.
 export class RateLimitError extends Error {
   retryAfterMs: number;
-  constructor(message: string, retryAfterMs: number) {
+  // "per-minute" → short retry makes sense; "per-day" → quota exhausted until
+  // reset (retrying soon is pointless); "unknown" → no quota dimension found.
+  scope: "per-minute" | "per-day" | "unknown";
+  quotaId?: string;
+  retryable: boolean;
+  constructor(
+    message: string,
+    opts: {
+      retryAfterMs: number;
+      scope: "per-minute" | "per-day" | "unknown";
+      quotaId?: string;
+      retryable: boolean;
+    }
+  ) {
     super(message);
     this.name = "RateLimitError";
-    this.retryAfterMs = retryAfterMs;
+    this.retryAfterMs = opts.retryAfterMs;
+    this.scope = opts.scope;
+    this.quotaId = opts.quotaId;
+    this.retryable = opts.retryable;
   }
 }
 
@@ -21,13 +37,46 @@ function asRateLimit(error: unknown): RateLimitError | null {
     /\b429\b/.test(message) ||
     /RESOURCE_EXHAUSTED/i.test(message);
   if (!is429) return null;
-  // Gemini embeds RetryInfo like {"retryDelay":"34s"} in the error body.
-  const match = message.match(/"?retryDelay"?\s*:\s*"?(\d+(?:\.\d+)?)s/i);
-  const retryAfterMs = match ? Math.ceil(Number(match[1]) * 1000) : 30_000;
-  return new RateLimitError(
-    "Gemini rate limit reached (free tier). Try again shortly.",
-    retryAfterMs
-  );
+
+  // Log the full body once so the real quota dimension is visible in server
+  // logs (per-minute vs per-day vs grounding-not-allowed).
+  console.error("Gemini 429 body:", message);
+
+  // Google's RetryInfo, e.g. {"retryDelay":"34s"}. Absent for daily caps.
+  const delayMatch = message.match(/"?retryDelay"?\s*:\s*"?(\d+(?:\.\d+)?)s/i);
+  const retryDelayMs = delayMatch ? Math.ceil(Number(delayMatch[1]) * 1000) : null;
+
+  // QuotaFailure violations carry a quotaId like
+  // "GenerateRequestsPerMinutePerProjectPerModel" or "...PerDay...".
+  const quotaMatch = message.match(/"?quotaId"?\s*:\s*"?([A-Za-z0-9_]+)/);
+  const quotaId = quotaMatch?.[1];
+  const isPerDay = /PerDay/i.test(message) || /PerDay/i.test(quotaId ?? "");
+  const isPerMinute = /PerMinute/i.test(message) || /PerMinute/i.test(quotaId ?? "");
+
+  const scope: RateLimitError["scope"] = isPerDay
+    ? "per-day"
+    : isPerMinute
+      ? "per-minute"
+      : "unknown";
+
+  // Only worth auto-retrying soon when it's a per-minute limit with a short,
+  // server-supplied delay. Daily caps reset hours away; "unknown" with no
+  // delay (e.g. grounding disabled on free tier) shouldn't fake a 30s retry.
+  const retryable =
+    scope === "per-minute" && retryDelayMs !== null && retryDelayMs <= 120_000;
+
+  const userMessage = isPerDay
+    ? "Gemini daily free-tier quota for web search is used up. It resets at midnight Pacific — or add billing for a higher limit."
+    : scope === "per-minute"
+      ? "Gemini per-minute rate limit hit. Try again in a moment."
+      : "Gemini rejected the web-search request (free-tier quota). Web search grounding may require enabling billing on your Google AI Studio key.";
+
+  return new RateLimitError(userMessage, {
+    retryAfterMs: retryDelayMs ?? 0,
+    scope,
+    quotaId,
+    retryable,
+  });
 }
 
 // Google Search grounding has a much stricter free-tier quota than plain
