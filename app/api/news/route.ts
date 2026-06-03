@@ -7,20 +7,9 @@ import {
   encodeTokens,
   COOKIE_NAME,
 } from "@/lib/trakt";
-import { generateShowNews, ShowNews } from "@/lib/gemini";
+import { generateShowNews, RateLimitError } from "@/lib/gemini";
 import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
-
-interface CacheEntry {
-  generatedAt: number;
-  result: ShowNews;
-}
-
-const cache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-
-function cacheKey(title: string, year: number | null): string {
-  return `${title.toLowerCase()}|${year ?? ""}`;
-}
+import { getCachedNews, setCachedNews, newsCacheKey } from "@/lib/news-cache";
 
 export async function GET(req: NextRequest) {
   const cookieStore = await cookies();
@@ -67,11 +56,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
   const year = yearParam ? Number(yearParam) : null;
-  const key = cacheKey(title, Number.isFinite(year) ? year : null);
+  const normalizedYear = Number.isFinite(year) ? (year as number) : null;
+  const key = newsCacheKey(title, normalizedYear);
 
   if (!force) {
-    const cached = cache.get(key);
-    if (cached && Date.now() - cached.generatedAt < CACHE_TTL_MS) {
+    const cached = await getCachedNews(key);
+    if (cached) {
       return NextResponse.json({
         ...cached.result,
         cached: true,
@@ -81,18 +71,25 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await generateShowNews(
-      geminiKey,
-      title,
-      Number.isFinite(year) ? (year as number) : null
-    );
-    cache.set(key, { generatedAt: Date.now(), result });
+    const result = await generateShowNews(geminiKey, title, normalizedYear);
+    await setCachedNews(key, { generatedAt: Date.now(), result });
     return NextResponse.json({
       ...result,
       cached: false,
       generatedAt: Date.now(),
     });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      const retryAfterSec = Math.ceil(error.retryAfterMs / 1000);
+      return NextResponse.json(
+        {
+          error: error.message,
+          detail: `Free-tier Gemini search quota hit. Retry in ~${retryAfterSec}s.`,
+          retryAfterMs: error.retryAfterMs,
+        },
+        { status: 429, headers: { "Retry-After": String(retryAfterSec) } }
+      );
+    }
     console.error("News fetch error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(

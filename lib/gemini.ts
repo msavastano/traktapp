@@ -2,6 +2,60 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 const MODEL = "gemini-3.1-flash-lite";
 
+// Raised when Gemini returns 429 RESOURCE_EXHAUSTED. Carries the retry delay
+// (ms) parsed from the API's RetryInfo so callers can surface it to the user.
+export class RateLimitError extends Error {
+  retryAfterMs: number;
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.name = "RateLimitError";
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function asRateLimit(error: unknown): RateLimitError | null {
+  const status = (error as { status?: number })?.status;
+  const message = error instanceof Error ? error.message : String(error);
+  const is429 =
+    status === 429 ||
+    /\b429\b/.test(message) ||
+    /RESOURCE_EXHAUSTED/i.test(message);
+  if (!is429) return null;
+  // Gemini embeds RetryInfo like {"retryDelay":"34s"} in the error body.
+  const match = message.match(/"?retryDelay"?\s*:\s*"?(\d+(?:\.\d+)?)s/i);
+  const retryAfterMs = match ? Math.ceil(Number(match[1]) * 1000) : 30_000;
+  return new RateLimitError(
+    "Gemini rate limit reached (free tier). Try again shortly.",
+    retryAfterMs
+  );
+}
+
+// Google Search grounding has a much stricter free-tier quota than plain
+// generation. Serialize grounded calls and space them out so a flurry of
+// modal opens doesn't trip the per-minute limit. Process-local (per server
+// instance); on serverless this resets per cold start.
+const GROUNDED_MIN_INTERVAL_MS = 1_500;
+let groundedChain: Promise<unknown> = Promise.resolve();
+let lastGroundedAt = 0;
+
+function runGrounded<T>(fn: () => Promise<T>): Promise<T> {
+  const run = groundedChain.then(async () => {
+    const wait = GROUNDED_MIN_INTERVAL_MS - (Date.now() - lastGroundedAt);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return await fn();
+    } finally {
+      lastGroundedAt = Date.now();
+    }
+  });
+  // Keep the chain alive even if this call rejects.
+  groundedChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
 // Bring-your-own-key: callers pass the end user's Gemini API key (entered in the
 // browser and forwarded per request). A new client is created per key so keys
 // are never shared or cached across users.
@@ -84,15 +138,20 @@ export async function generateRecommendations(
   count: number = 12
 ): Promise<GeminiRecommendation[]> {
   const ai = getClient(apiKey);
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: buildPrompt(taste, count),
-    config: {
-      responseMimeType: "application/json",
-      responseSchema,
-      temperature: 0.8,
-    },
-  });
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: MODEL,
+      contents: buildPrompt(taste, count),
+      config: {
+        responseMimeType: "application/json",
+        responseSchema,
+        temperature: 0.8,
+      },
+    });
+  } catch (error) {
+    throw asRateLimit(error) ?? error;
+  }
 
   const text = response.text;
   if (!text) {
@@ -130,14 +189,21 @@ Focus on:
 
 Write a concise update (3-6 short paragraphs or bullets) covering what's known about the show's return. If reliable news is sparse, say so plainly. Prefer information from the past 12 months. Cite sources inline by name where helpful.`;
 
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: prompt,
-    config: {
-      tools: [{ googleSearch: {} }],
-      temperature: 0.4,
-    },
-  });
+  let response;
+  try {
+    response = await runGrounded(() =>
+      ai.models.generateContent({
+        model: MODEL,
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          temperature: 0.4,
+        },
+      })
+    );
+  } catch (error) {
+    throw asRateLimit(error) ?? error;
+  }
 
   const summary = response.text ?? "";
   if (!summary) {
