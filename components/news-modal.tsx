@@ -20,6 +20,7 @@ interface NewsResponse {
   generatedAt?: number;
   error?: string;
   detail?: string;
+  retryAfterMs?: number;
 }
 
 interface Props {
@@ -36,6 +37,8 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [needsKey, setNeedsKey] = useState(false);
   const [keyModalOpen, setKeyModalOpen] = useState(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoRetried = useRef(false);
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -70,6 +73,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
       setNeedsKey(true);
       return;
     }
+    if (force) autoRetried.current = false;
     setNeedsKey(false);
     setLoading(true);
     setError(null);
@@ -86,8 +90,24 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
             setNeedsKey(true);
             return;
           }
+          if (res.status === 429) {
+            const delay = json.retryAfterMs ?? 30_000;
+            if (!autoRetried.current) {
+              autoRetried.current = true;
+              const sec = Math.ceil(delay / 1000);
+              setError(
+                `${json.error || "Rate limited"} Retrying automatically in ${sec}s…`
+              );
+              retryTimer.current = setTimeout(() => fetchNews(force), delay);
+              return;
+            }
+            throw new Error(
+              json.detail || json.error || "Rate limited. Try again shortly."
+            );
+          }
           throw new Error(json.error || `Request failed (${res.status})`);
         }
+        autoRetried.current = false;
         setData(json);
       })
       .catch((err) => {
@@ -98,6 +118,8 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    autoRetried.current = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setData(null);
     setError(null);
@@ -105,6 +127,12 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
     fetchNews(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, showTitle, showYear]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current);
+    };
+  }, []);
 
   return (
     <dialog ref={dialogRef} className="news-dialog">
