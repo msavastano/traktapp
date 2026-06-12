@@ -19,5 +19,8 @@
       "PowerShell(git rm *)",
       "PowerShell(npx tsc --noEmit; if \\($?\\) { \"TSC OK\" })"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "trakt"
+  ]
 }

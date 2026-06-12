@@ -10,6 +10,7 @@ import { SearchShows } from "@/components/search-shows";
 import { WatchedMenu } from "@/components/watched-menu";
 import { UnwatchMenu } from "@/components/unwatch-menu";
 import { NewsModal } from "@/components/news-modal";
+import { DiscoverShows } from "@/components/discover-shows";
 
 const posterUrl = (s: TrackedShow): string | null => {
   const p = s.show.images?.poster?.[0];
@@ -26,10 +27,10 @@ interface WatchlistResponse {
   };
 }
 
-type Tab = "tracking" | "watchlist" | "calendar";
+type Tab = "tracking" | "watchlist" | "calendar" | "discover";
 type Filter = "all" | "upcoming" | "waiting" | "behind" | "completed";
 
-const VALID_TABS: Tab[] = ["tracking", "watchlist", "calendar"];
+const VALID_TABS: Tab[] = ["tracking", "watchlist", "calendar", "discover"];
 const VALID_FILTERS: Filter[] = ["all", "upcoming", "waiting", "behind", "completed"];
 
 const RAW_STORAGE_KEY = "dashboard.showRaw";
@@ -963,6 +964,13 @@ function DashboardInner() {
           >
             Calendar
           </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === "discover" ? "active" : ""}`}
+            onClick={() => setActiveTab("discover")}
+          >
+            Discover
+          </button>
         </div>
 
         {activeTab === "tracking" && (
@@ -1022,10 +1030,15 @@ function DashboardInner() {
 
         <section className="watchlist-section">
           <h2 className="section-title">
-            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : "Calendar"}
+            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "calendar" ? "Calendar" : "Discover"}
           </h2>
 
-          {activeTab === "calendar" ? (
+          {activeTab === "discover" ? (
+            <DiscoverShows
+              existingIds={existingShowIds}
+              onAdded={() => fetchWatchlist(true)}
+            />
+          ) : activeTab === "calendar" ? (
             calendarLoading ? (
               <div className="watchlist-grid" aria-busy="true" aria-label="Loading calendar">
                 {Array.from({ length: 6 }).map((_, i) => (

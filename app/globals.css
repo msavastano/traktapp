@@ -2135,3 +2135,29 @@ select {
   gap: var(--space-3, 12px);
   margin-top: var(--space-2, 8px);
 }
+
+/* ------------------------------------------------------------------ */
+/* Discover tab                                                        */
+/* ------------------------------------------------------------------ */
+
+.discover-subtabs {
+  margin: 0 0 var(--space-6);
+}
+
+.discover-subtabs .tab-btn {
+  font-size: 14px;
+}
+
+.discover-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+  border: 1px solid var(--border-light);
+  background: var(--surface-container);
+  color: var(--muted);
+}
