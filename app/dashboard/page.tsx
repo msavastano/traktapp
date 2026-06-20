@@ -27,10 +27,10 @@ interface WatchlistResponse {
   };
 }
 
-type Tab = "tracking" | "watchlist" | "calendar" | "discover";
+type Tab = "tracking" | "watchlist" | "upcoming" | "calendar" | "discover";
 type Filter = "all" | "upcoming" | "waiting" | "behind" | "completed";
 
-const VALID_TABS: Tab[] = ["tracking", "watchlist", "calendar", "discover"];
+const VALID_TABS: Tab[] = ["tracking", "watchlist", "upcoming", "calendar", "discover"];
 const VALID_FILTERS: Filter[] = ["all", "upcoming", "waiting", "behind", "completed"];
 
 const RAW_STORAGE_KEY = "dashboard.showRaw";
@@ -858,6 +858,7 @@ function DashboardInner() {
   const {
     trackingShows,
     watchlistShows,
+    upcomingShows,
     upcomingCount,
     waitingCount,
     behindCount,
@@ -879,6 +880,15 @@ function DashboardInner() {
     tracking.sort(compareShows);
     watchlist.sort(compareShows);
 
+    // Unified Upcoming view: any show (tracking OR watchlist) with an air time
+    // in the future — caught-up shows awaiting a new episode, plus not-yet-aired
+    // watchlist premieres. Sorted soonest-first (ascending), unlike compareShows.
+    const upcomingList = shows
+      .map((s) => ({ s, t: nextUnwatchedAirTime(s) }))
+      .filter((x): x is { s: TrackedShow; t: number } => x.t !== null && x.t > now)
+      .sort((a, b) => a.t - b.t)
+      .map((x) => x.s);
+
     const upcoming = tracking.filter((s) => s.trackingStatus === "waiting_new_episodes").length;
     const waiting = tracking.filter((s) => s.trackingStatus === "waiting_new_season" || s.trackingStatus === "caught_up").length;
     const behind = tracking.filter((s) => s.trackingStatus === "behind").length;
@@ -896,11 +906,17 @@ function DashboardInner() {
       return s.trackingStatus === filter;
     });
 
-    const displayed = activeTab === "tracking" ? filteredTracking : watchlist;
+    const displayed =
+      activeTab === "tracking"
+        ? filteredTracking
+        : activeTab === "upcoming"
+          ? upcomingList
+          : watchlist;
 
     return {
       trackingShows: tracking,
       watchlistShows: watchlist,
+      upcomingShows: upcomingList,
       upcomingCount: upcoming,
       waitingCount: waiting,
       behindCount: behind,
@@ -957,7 +973,14 @@ function DashboardInner() {
           >
             Watchlist ({watchlistShows.length})
           </button>
-          <button 
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === "upcoming" ? "active" : ""}`}
+            onClick={() => setActiveTab("upcoming")}
+          >
+            Upcoming ({upcomingShows.length})
+          </button>
+          <button
             type="button"
             className={`tab-btn ${activeTab === "calendar" ? "active" : ""}`}
             onClick={() => setActiveTab("calendar")}
@@ -1030,7 +1053,7 @@ function DashboardInner() {
 
         <section className="watchlist-section">
           <h2 className="section-title">
-            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "calendar" ? "Calendar" : "Discover"}
+            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "upcoming" ? "Coming Soon" : activeTab === "calendar" ? "Calendar" : "Discover"}
           </h2>
 
           {activeTab === "discover" ? (
@@ -1279,9 +1302,11 @@ function DashboardInner() {
               <div className="coming-soon-icon">🔍</div>
               <h3 className="coming-soon-title">No shows found</h3>
               <p className="coming-soon-desc">
-                {activeTab === "tracking" 
+                {activeTab === "tracking"
                   ? "Try selecting a different category above."
-                  : "Add some shows to your watchlist!"}
+                  : activeTab === "upcoming"
+                    ? "No shows with a known future air date right now."
+                    : "Add some shows to your watchlist!"}
               </p>
             </div>
           ) : (
