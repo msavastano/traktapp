@@ -93,6 +93,56 @@ export interface TraktWatchlistItem {
 }
 
 // ---------------------------------------------------------------------------
+// Movie shapes (for "Upcoming on Streaming")
+// ---------------------------------------------------------------------------
+
+export interface TraktMovieIds {
+  trakt: number;
+  slug: string;
+  imdb: string | null;
+  tmdb: number | null;
+}
+
+export interface TraktMovie {
+  title: string;
+  year: number | null;
+  ids: TraktMovieIds;
+  overview?: string;
+  runtime?: number;
+  rating?: number;
+  votes?: number;
+  genres?: string[];
+  certification?: string;
+  images?: TraktImages;
+}
+
+/** One entry from GET /movies/{id}/releases/{country}. */
+export interface TraktMovieRelease {
+  country: string;
+  certification: string | null;
+  release_date: string; // YYYY-MM-DD
+  release_type:
+    | "unknown"
+    | "premiere"
+    | "limited"
+    | "theatrical"
+    | "digital"
+    | "physical"
+    | "tv";
+  note: string | null;
+}
+
+/**
+ * A movie paired with the soonest upcoming release entry that looks like a
+ * "now streaming with a subscription" window (release_type digital|tv, note
+ * present, date in the future). Best-effort heuristic — see lib/movies.ts.
+ */
+export interface UpcomingStreamingRelease {
+  movie: TraktMovie;
+  release: TraktMovieRelease;
+}
+
+// ---------------------------------------------------------------------------
 // Enriched data structure — the core model for the UI
 // ---------------------------------------------------------------------------
 
