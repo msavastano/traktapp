@@ -8,7 +8,7 @@
 
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 
-const TRAKT_API_BASE = "https://api.trakt.tv";
+export const TRAKT_API_BASE = "https://api.trakt.tv";
 const TRAKT_AUTH_BASE = "https://trakt.tv";
 const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
 
@@ -16,7 +16,7 @@ const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
 // Headers
 // ---------------------------------------------------------------------------
 
-function baseHeaders(): Record<string, string> {
+export function baseHeaders(): Record<string, string> {
   return {
     "Content-Type": "application/json",
     "User-Agent": USER_AGENT,
@@ -25,7 +25,7 @@ function baseHeaders(): Record<string, string> {
   };
 }
 
-function authHeaders(accessToken: string): Record<string, string> {
+export function authHeaders(accessToken: string): Record<string, string> {
   return {
     ...baseHeaders(),
     Authorization: `Bearer ${accessToken}`,

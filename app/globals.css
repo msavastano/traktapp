@@ -2161,3 +2161,17 @@ select {
   background: var(--surface-container);
   color: var(--muted);
 }
+
+.streaming-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px var(--space-3);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: rgba(61, 92, 62, 0.12);
+  color: var(--sage-green);
+  border: 1px solid var(--sage-green);
+}

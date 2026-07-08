@@ -11,6 +11,7 @@ import { WatchedMenu } from "@/components/watched-menu";
 import { UnwatchMenu } from "@/components/unwatch-menu";
 import { NewsModal } from "@/components/news-modal";
 import { DiscoverShows } from "@/components/discover-shows";
+import { UpcomingStreaming } from "@/components/upcoming-streaming";
 
 const posterUrl = (s: TrackedShow): string | null => {
   const p = s.show.images?.poster?.[0];
@@ -27,10 +28,10 @@ interface WatchlistResponse {
   };
 }
 
-type Tab = "tracking" | "watchlist" | "upcoming" | "calendar" | "discover";
+type Tab = "tracking" | "watchlist" | "upcoming" | "calendar" | "discover" | "streaming";
 type Filter = "all" | "upcoming" | "waiting" | "behind" | "completed";
 
-const VALID_TABS: Tab[] = ["tracking", "watchlist", "upcoming", "calendar", "discover"];
+const VALID_TABS: Tab[] = ["tracking", "watchlist", "upcoming", "calendar", "discover", "streaming"];
 const VALID_FILTERS: Filter[] = ["all", "upcoming", "waiting", "behind", "completed"];
 
 const RAW_STORAGE_KEY = "dashboard.showRaw";
@@ -994,6 +995,13 @@ function DashboardInner() {
           >
             Discover
           </button>
+          <button
+            type="button"
+            className={`tab-btn ${activeTab === "streaming" ? "active" : ""}`}
+            onClick={() => setActiveTab("streaming")}
+          >
+            Streaming Soon
+          </button>
         </div>
 
         {activeTab === "tracking" && (
@@ -1053,7 +1061,7 @@ function DashboardInner() {
 
         <section className="watchlist-section">
           <h2 className="section-title">
-            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "upcoming" ? "Coming Soon" : activeTab === "calendar" ? "Calendar" : "Discover"}
+            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "upcoming" ? "Coming Soon" : activeTab === "calendar" ? "Calendar" : activeTab === "streaming" ? "Upcoming on Streaming" : "Discover"}
           </h2>
 
           {activeTab === "discover" ? (
@@ -1061,6 +1069,8 @@ function DashboardInner() {
               existingIds={existingShowIds}
               onAdded={() => fetchWatchlist(true)}
             />
+          ) : activeTab === "streaming" ? (
+            <UpcomingStreaming />
           ) : activeTab === "calendar" ? (
             calendarLoading ? (
               <div className="watchlist-grid" aria-busy="true" aria-label="Loading calendar">
