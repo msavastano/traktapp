@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchCandidateMoviePool, fetchUpcomingStreamingReleases } from "@/lib/movies";
+import { fetchUpcomingMovieReleases } from "@/lib/movies";
 import type { UpcomingStreamingRelease } from "@/lib/types";
 
 interface UpcomingStreamingPayload {
@@ -33,8 +33,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const pool = await fetchCandidateMoviePool();
-    const releases = await fetchUpcomingStreamingReleases(pool);
+    const releases = await fetchUpcomingMovieReleases();
     const payload: UpcomingStreamingPayload = {
       releases,
       generatedAt: new Date().toISOString(),

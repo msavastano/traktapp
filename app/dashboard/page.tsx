@@ -6,6 +6,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import type { TrackedShow, NextEpisodeInfo } from "@/lib/types";
+import { posterFrom, simklShowUrl } from "@/lib/images";
 import { SearchShows } from "@/components/search-shows";
 import { WatchedMenu } from "@/components/watched-menu";
 import { UnwatchMenu } from "@/components/unwatch-menu";
@@ -13,10 +14,7 @@ import { NewsModal } from "@/components/news-modal";
 import { DiscoverShows } from "@/components/discover-shows";
 import { UpcomingStreaming } from "@/components/upcoming-streaming";
 
-const posterUrl = (s: TrackedShow): string | null => {
-  const p = s.show.images?.poster?.[0];
-  return p ? `https://${p.replace(/^https?:\/\//, "")}` : null;
-};
+const posterUrl = (s: TrackedShow): string | null => posterFrom(s.show);
 
 interface WatchlistResponse {
   shows: TrackedShow[];
@@ -85,10 +83,10 @@ function DashboardInner() {
       number: number;
       title: string;
       ids: {
-        trakt: number;
-        tvdb: number | null;
-        imdb: string | null;
-        tmdb: number | null;
+        simkl: number;
+        tvdb?: string | null;
+        imdb?: string | null;
+        tmdb?: string | null;
       };
       overview?: string;
       runtime?: number;
@@ -97,11 +95,11 @@ function DashboardInner() {
       title: string;
       year: number | null;
       ids: {
-        trakt: number;
+        simkl: number;
         slug: string;
-        tvdb: number | null;
-        imdb: string | null;
-        tmdb: number | null;
+        tvdb?: string | null;
+        imdb?: string | null;
+        tmdb?: string | null;
       };
     };
   }
@@ -169,13 +167,13 @@ function DashboardInner() {
   };
 
   const findCalendarPoster = (calendarShowId: number): string | null => {
-    const matched = shows.find((s) => s.show.ids.trakt === calendarShowId);
+    const matched = shows.find((s) => s.show.ids.simkl === calendarShowId);
     if (!matched) return null;
     return posterUrl(matched);
   };
 
   const isEpisodeWatched = (showId: number, season: number, number: number): boolean => {
-    const matched = shows.find((s) => s.show.ids.trakt === showId);
+    const matched = shows.find((s) => s.show.ids.simkl === showId);
     if (!matched || !matched.progress?.watchedEpisodes) return false;
     const key = `${season}-${number}`;
     return !!matched.progress.watchedEpisodes[key];
@@ -205,7 +203,7 @@ function DashboardInner() {
   const optimisticMarkCalendarEpisode = (showId: number, season: number, episodeNumber: number) => {
     setShows((prev) =>
       prev.map((s) => {
-        if (s.show.ids.trakt !== showId) return s;
+        if (s.show.ids.simkl !== showId) return s;
         const watchedEpisodes = { ...(s.progress.watchedEpisodes || {}) };
         watchedEpisodes[`${season}-${episodeNumber}`] = true;
         
@@ -251,7 +249,9 @@ function DashboardInner() {
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ episodeId }),
+        // Simkl addresses episodes by (show, season, episode) — there is no
+        // episode-id write path.
+        body: JSON.stringify({ showId, season, episode: episodeNumber }),
       });
       if (!res.ok) console.error("Failed to mark as watched");
     } catch (err) {
@@ -438,9 +438,9 @@ function DashboardInner() {
             if (data.type === "metadata") {
               const incomingShows = data.shows || [];
               setShows((prev) => {
-                const prevMap = new Map(prev.map((s) => [s.show.ids.trakt, s]));
+                const prevMap = new Map(prev.map((s) => [s.show.ids.simkl, s]));
                 const merged = incomingShows.map((s: TrackedShow) => {
-                  const existing = prevMap.get(s.show.ids.trakt);
+                  const existing = prevMap.get(s.show.ids.simkl);
                   if (existing && existing.isEnriched) {
                     return existing;
                   }
@@ -456,7 +456,7 @@ function DashboardInner() {
             } else if (data.type === "enrich") {
               setShows((prev) => {
                 const updated = prev.map((s) =>
-                  s.show.ids.trakt === data.showId
+                  s.show.ids.simkl === data.showId
                     ? { ...data.enriched, isEnriched: true }
                     : s
                 );
@@ -465,7 +465,7 @@ function DashboardInner() {
             } else if (data.type === "error") {
               setShows((prev) => {
                 const updated = prev.map((s) =>
-                  s.show.ids.trakt === data.showId
+                  s.show.ids.simkl === data.showId
                     ? { ...s, isEnriched: true, enrichmentError: true }
                     : s
                 );
@@ -484,9 +484,9 @@ function DashboardInner() {
           if (data.type === "metadata") {
             const incomingShows = data.shows || [];
             setShows((prev) => {
-              const prevMap = new Map(prev.map((s) => [s.show.ids.trakt, s]));
+              const prevMap = new Map(prev.map((s) => [s.show.ids.simkl, s]));
               const merged = incomingShows.map((s: TrackedShow) => {
-                const existing = prevMap.get(s.show.ids.trakt);
+                const existing = prevMap.get(s.show.ids.simkl);
                 if (existing && existing.isEnriched) {
                   return existing;
                 }
@@ -502,7 +502,7 @@ function DashboardInner() {
           } else if (data.type === "enrich") {
             setShows((prev) => {
               const updated = prev.map((s) =>
-                s.show.ids.trakt === data.showId
+                s.show.ids.simkl === data.showId
                   ? { ...data.enriched, isEnriched: true }
                   : s
               );
@@ -511,7 +511,7 @@ function DashboardInner() {
           } else if (data.type === "error") {
             setShows((prev) => {
               const updated = prev.map((s) =>
-                s.show.ids.trakt === data.showId
+                s.show.ids.simkl === data.showId
                   ? { ...s, isEnriched: true, enrichmentError: true }
                   : s
               );
@@ -564,7 +564,7 @@ function DashboardInner() {
   ) => {
     setShows((prev) =>
       prev.map((s) => {
-        if (s.show.ids.trakt !== showId) return s;
+        if (s.show.ids.simkl !== showId) return s;
         if (s.progress.nextEpisode?.id !== fromEpisodeId) return s;
         const newCompleted = s.progress.completed + 1;
         const newUnwatched = Math.max(0, s.progress.unwatchedCount - 1);
@@ -590,13 +590,13 @@ function DashboardInner() {
 
   const handleSkipEpisode = async (
     showId: number,
-    slug: string,
+    slug: string | undefined,
     episode: NextEpisodeInfo
   ) => {
     setSkipPending((prev) => ({ ...prev, [episode.id]: true }));
     try {
       const res = await fetch(
-        `/api/next-episode?slug=${encodeURIComponent(slug)}&season=${episode.season}&episode=${episode.episode}`
+        `/api/next-episode?showId=${episode.showId}&season=${episode.season}&episode=${episode.episode}`
       );
       const data: { next?: NextEpisodeInfo | null } = res.ok
         ? await res.json()
@@ -619,7 +619,7 @@ function DashboardInner() {
   // the mapping in-place so applySkips advances to the next-next episode after
   // the server refetch — otherwise the user stays parked on the just-watched ep.
   const refreshSkipChainAfterWatch = async (
-    slug: string,
+    slug: string | undefined,
     watched: NextEpisodeInfo
   ) => {
     const skipMap = skippedEpisodeMapRef.current;
@@ -630,7 +630,7 @@ function DashboardInner() {
     if (stale.length === 0) return;
     try {
       const res = await fetch(
-        `/api/next-episode?slug=${encodeURIComponent(slug)}&season=${watched.season}&episode=${watched.episode}`
+        `/api/next-episode?showId=${watched.showId}&season=${watched.season}&episode=${watched.episode}`
       );
       const data: { next?: NextEpisodeInfo | null } = res.ok
         ? await res.json()
@@ -642,7 +642,7 @@ function DashboardInner() {
   };
 
   const handleMarkWatched = async (
-    slug: string,
+    slug: string | undefined,
     episode: NextEpisodeInfo
   ) => {
     setMarkingIds((prev) => ({ ...prev, [episode.id]: true }));
@@ -651,7 +651,11 @@ function DashboardInner() {
       const res = await fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ episodeId: episode.id }),
+        body: JSON.stringify({
+          showId: episode.showId,
+          season: episode.season,
+          episode: episode.episode,
+        }),
       });
       if (!res.ok) console.error("Failed to mark as watched");
     } catch (err) {
@@ -669,7 +673,7 @@ function DashboardInner() {
   const optimisticMarkBulk = (showId: number, season?: number) => {
     setShows((prev) =>
       prev.map((s) => {
-        if (s.show.ids.trakt !== showId) return s;
+        if (s.show.ids.simkl !== showId) return s;
         if (typeof season === "number") {
           const seasons = s.progress.seasons.map((sn) =>
             sn.number === season
@@ -720,7 +724,7 @@ function DashboardInner() {
   ) => {
     setShows((prev) =>
       prev.map((s) => {
-        if (s.show.ids.trakt !== showId) return s;
+        if (s.show.ids.simkl !== showId) return s;
         if (mode.kind === "episode") {
           const newCompleted = Math.max(0, s.progress.completed - 1);
           return {
@@ -767,7 +771,7 @@ function DashboardInner() {
 
   const handleUnwatch = async (
     showId: number,
-    body: { episodeId?: number; showId?: number; season?: number },
+    body: { showId: number; season?: number; episode?: number },
     mode: { kind: "episode" } | { kind: "season"; season: number }
   ) => {
     setUnwatching((prev) => ({ ...prev, [showId]: true }));
@@ -829,7 +833,7 @@ function DashboardInner() {
   }, [isAuthenticated, activeTab]);
 
   const existingShowIds = useMemo(
-    () => new Set(shows.map((s) => s.show.ids.trakt).filter(Boolean) as number[]),
+    () => new Set(shows.map((s) => s.show.ids.simkl).filter(Boolean) as number[]),
     [shows]
   );
 
@@ -1191,9 +1195,9 @@ function DashboardInner() {
                         ) : (
                           <div className="calendar-episode-grid">
                             {eps.map((item, idx) => {
-                              const poster = findCalendarPoster(item.show.ids.trakt);
+                              const poster = findCalendarPoster(item.show.ids.simkl);
                               const isWatched = isEpisodeWatched(
-                                item.show.ids.trakt,
+                                item.show.ids.simkl,
                                 item.episode.season,
                                 item.episode.number
                               );
@@ -1202,7 +1206,7 @@ function DashboardInner() {
 
                               return (
                                 <div
-                                  key={`${item.episode.ids.trakt}-${idx}`}
+                                  key={`${item.episode.ids.simkl}-${idx}`}
                                   className="watchlist-card"
                                 >
                                   <div className="watchlist-card-poster">
@@ -1226,7 +1230,14 @@ function DashboardInner() {
                                     <div className="watchlist-card-header">
                                       <div className="watchlist-card-title-row">
                                         <h3 className="watchlist-card-title">
-                                          {item.show.title || "Unknown"}
+                                          <a
+                                            className="simkl-link"
+                                            href={simklShowUrl(item.show.ids.simkl, item.show.ids.slug)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                          >
+                                            {item.show.title || "Unknown"}
+                                          </a>
                                         </h3>
                                         {item.show.year && (
                                           <span className="watchlist-card-year">{item.show.year}</span>
@@ -1257,18 +1268,18 @@ function DashboardInner() {
                                         <button
                                           type="button"
                                           className="mark-watched-btn"
-                                          disabled={markingIds[item.episode.ids.trakt]}
+                                          disabled={markingIds[item.episode.ids.simkl]}
                                           onClick={() =>
                                             handleMarkCalendarEpisode(
-                                              item.show.ids.trakt,
+                                              item.show.ids.simkl,
                                               item.show.ids.slug,
-                                              item.episode.ids.trakt,
+                                              item.episode.ids.simkl,
                                               item.episode.season,
                                               item.episode.number
                                             )
                                           }
                                         >
-                                          {markingIds[item.episode.ids.trakt] ? "..." : "Mark Watched ✓"}
+                                          {markingIds[item.episode.ids.simkl] ? "..." : "Mark Watched ✓"}
                                         </button>
                                       )}
                                     </div>
@@ -1359,7 +1370,7 @@ function DashboardInner() {
 
                 return (
                   <div
-                    key={ids.trakt || index}
+                    key={ids.simkl || index}
                     className="watchlist-card"
                     style={{ animationDelay: `${index * 0.05}s` }}
                   >
@@ -1381,7 +1392,15 @@ function DashboardInner() {
                     <div className="watchlist-card-header">
                       <div className="watchlist-card-title-row">
                         <h3 className="watchlist-card-title">
-                          {show.title || "Unknown"}
+                          {/* Required link-back — see Simkl API rules. */}
+                          <a
+                            className="simkl-link"
+                            href={simklShowUrl(ids.simkl, show.ids.slug)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {show.title || "Unknown"}
+                          </a>
                         </h3>
                         {show.year && (
                           <span className="watchlist-card-year">{show.year}</span>
@@ -1428,7 +1447,7 @@ function DashboardInner() {
                       <button
                         type="button"
                         className="news-btn"
-                        onClick={() => setNewsOpenFor(ids.trakt)}
+                        onClick={() => setNewsOpenFor(ids.simkl)}
                       >
                         📰 Latest news
                       </button>
@@ -1436,7 +1455,7 @@ function DashboardInner() {
 
                     {showNewsButton && (
                       <NewsModal
-                        open={newsOpenFor === ids.trakt}
+                        open={newsOpenFor === ids.simkl}
                         showTitle={show.title}
                         showYear={show.year}
                         onClose={() => setNewsOpenFor(null)}
@@ -1492,18 +1511,22 @@ function DashboardInner() {
                                   showTitle={show.title}
                                   episodeLabel={`S${String(progress.lastEpisode.season).padStart(2, "0")}E${String(progress.lastEpisode.episode).padStart(2, "0")} · ${progress.lastEpisode.title}`}
                                   episodeSeason={progress.lastEpisode.season}
-                                  busy={unwatching[ids.trakt]}
+                                  busy={unwatching[ids.simkl]}
                                   onUnwatchEpisode={() =>
                                     handleUnwatch(
-                                      ids.trakt,
-                                      { episodeId: progress.lastEpisode!.id },
+                                      ids.simkl,
+                                      {
+                                        showId: ids.simkl,
+                                        season: progress.lastEpisode!.season,
+                                        episode: progress.lastEpisode!.episode,
+                                      },
                                       { kind: "episode" }
                                     )
                                   }
                                   onUnwatchSeason={() =>
                                     handleUnwatch(
-                                      ids.trakt,
-                                      { showId: ids.trakt, season: progress.lastEpisode!.season },
+                                      ids.simkl,
+                                      { showId: ids.simkl, season: progress.lastEpisode!.season },
                                       { kind: "season", season: progress.lastEpisode!.season }
                                     )
                                   }
@@ -1528,7 +1551,7 @@ function DashboardInner() {
                                   <span className="mark-watched-group">
                                     <button
                                       className="mark-watched-btn"
-                                      disabled={markingIds[progress.nextEpisode.id] || bulkMarking[ids.trakt]}
+                                      disabled={markingIds[progress.nextEpisode.id] || bulkMarking[ids.simkl]}
                                       onClick={() => handleMarkWatched(show.ids.slug, progress.nextEpisode!)}
                                     >
                                       {markingIds[progress.nextEpisode.id] ? "..." : "Mark Watched ✓"}
@@ -1536,22 +1559,22 @@ function DashboardInner() {
                                     <WatchedMenu
                                       showTitle={show.title}
                                       seasonNumber={progress.nextEpisode.season}
-                                      busy={bulkMarking[ids.trakt] || skipPending[progress.nextEpisode.id]}
+                                      busy={bulkMarking[ids.simkl] || skipPending[progress.nextEpisode.id]}
                                       onSkipEpisode={() =>
                                         handleSkipEpisode(
-                                          ids.trakt,
+                                          ids.simkl,
                                           show.ids.slug,
                                           progress.nextEpisode!
                                         )
                                       }
                                       onMarkSeason={() =>
-                                        handleMarkBulk(ids.trakt, {
-                                          showId: ids.trakt,
+                                        handleMarkBulk(ids.simkl, {
+                                          showId: ids.simkl,
                                           season: progress.nextEpisode!.season,
                                         })
                                       }
                                       onMarkShow={() =>
-                                        handleMarkBulk(ids.trakt, { showId: ids.trakt })
+                                        handleMarkBulk(ids.simkl, { showId: ids.simkl })
                                       }
                                     />
                                   </span>
@@ -1610,13 +1633,13 @@ function DashboardInner() {
                     <button
                       className="raw-toggle"
                       onClick={() =>
-                        setShowRaw(showRaw === ids.trakt ? null : ids.trakt)
+                        setShowRaw(showRaw === ids.simkl ? null : ids.simkl)
                       }
                     >
-                      {showRaw === ids.trakt ? "Hide" : "Show"} raw data
+                      {showRaw === ids.simkl ? "Hide" : "Show"} raw data
                     </button>
 
-                    {showRaw === ids.trakt && (
+                    {showRaw === ids.simkl && (
                       <pre className="raw-json">
                         {JSON.stringify(tracked, null, 2)}
                       </pre>

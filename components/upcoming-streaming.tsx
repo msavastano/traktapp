@@ -2,12 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import type { UpcomingStreamingRelease, TraktMovie } from "@/lib/types";
+import type { UpcomingStreamingRelease, SimklMovie } from "@/lib/types";
+import { posterFrom, simklMovieUrl } from "@/lib/images";
 
-const posterUrl = (movie: TraktMovie): string | null => {
-  const p = movie.images?.poster?.[0];
-  return p ? `https://${p.replace(/^https?:\/\//, "")}` : null;
-};
+const posterUrl = (movie: SimklMovie): string | null => posterFrom(movie);
 
 export function UpcomingStreaming() {
   const [items, setItems] = useState<UpcomingStreamingRelease[] | null>(null);
@@ -67,16 +65,16 @@ export function UpcomingStreaming() {
 
   return (
     <div className="watchlist-grid">
-      {items.map(({ movie, release }, index) => {
+      {items.map(({ movie, releaseDate }, index) => {
         const poster = posterUrl(movie);
-        const dateStr = new Date(release.release_date).toLocaleDateString("en-US", {
+        const dateStr = new Date(releaseDate).toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
         });
         return (
           <div
-            key={movie.ids.trakt || index}
+            key={movie.ids.simkl || index}
             className="watchlist-card"
             style={{ animationDelay: `${index * 0.05}s` }}
           >
@@ -98,10 +96,19 @@ export function UpcomingStreaming() {
             <div className="watchlist-card-body">
               <div className="watchlist-card-header">
                 <div className="watchlist-card-title-row">
-                  <h3 className="watchlist-card-title">{movie.title || "Unknown"}</h3>
+                  <h3 className="watchlist-card-title">
+                    <a
+                      className="simkl-link"
+                      href={simklMovieUrl(movie.ids.simkl, movie.ids.slug)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {movie.title || "Unknown"}
+                    </a>
+                  </h3>
                   {movie.year && <span className="watchlist-card-year">{movie.year}</span>}
                 </div>
-                <span className="streaming-badge">📡 Streaming on {release.note}</span>
+                <span className="streaming-badge">📅 Releasing {dateStr}</span>
               </div>
 
               {movie.overview && (
@@ -124,10 +131,8 @@ export function UpcomingStreaming() {
 
               <div className="episode-info-row" style={{ borderTop: "none", paddingTop: 0 }}>
                 <div className="episode-info">
-                  <span className="episode-info-label">Streaming</span>
-                  <span className="episode-info-value">
-                    {dateStr} on {release.note}
-                  </span>
+                  <span className="episode-info-label">Releases</span>
+                  <span className="episode-info-value">{dateStr}</span>
                 </div>
               </div>
             </div>

@@ -1,22 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  COOKIE_NAME,
-  fetchTrakt,
-} from "@/lib/trakt";
+import { fetchSimkl, apiUrl, baseHeaders, normalizeShow } from "@/lib/simkl";
+import { getSession } from "@/lib/session";
+import { syncLibrary } from "@/lib/sync";
 import { generateRecommendations, TasteShow, GeminiRecommendation } from "@/lib/gemini";
 import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
-import type { TraktShow } from "@/lib/types";
-
-const TRAKT_API_BASE = "https://api.trakt.tv";
-const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
+import type { SimklShow } from "@/lib/types";
 
 export interface RecommendationCard extends GeminiRecommendation {
-  show: TraktShow | null;
+  show: SimklShow | null;
 }
 
 interface CacheEntry {
@@ -28,12 +19,9 @@ const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour soft TTL; per-session caching
 
 export async function GET(req: NextRequest) {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (!encoded) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+  const session = await getSession();
+  if (!session.ok) return session.response;
+  const { tokens } = session;
 
   const geminiKey = req.headers.get(GEMINI_KEY_HEADER)?.trim();
   if (!geminiKey) {
@@ -41,28 +29,6 @@ export async function GET(req: NextRequest) {
       { error: MISSING_KEY_ERROR, detail: "Add your Gemini API key to get AI recommendations." },
       { status: 400 }
     );
-  }
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ error: "Invalid token data" }, { status: 401 });
-  }
-
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ user: null }, { status: 401 });
-    }
   }
 
   const force = req.nextUrl.searchParams.get("refresh") === "1";
@@ -79,56 +45,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const headers = {
-    "Content-Type": "application/json",
-    "User-Agent": USER_AGENT,
-    "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-    "trakt-api-version": "2",
-    Authorization: `Bearer ${tokens.access_token}`,
-  };
-
   try {
-    const [watchlistRes, watchedRes] = await Promise.all([
-      fetchTrakt(`${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full`, { headers }),
-      fetchTrakt(`${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full`, { headers }),
-    ]);
+    // One activities-gated call replaces the old watchlist + watched pair,
+    // and already de-duplicates by show.
+    const { items } = await syncLibrary(
+      tokens.access_token,
+      `sync:${tokens.access_token}`
+    );
 
-    if (!watchlistRes.ok || !watchedRes.ok) {
-      return NextResponse.json({ error: "Failed to fetch taste data" }, { status: 500 });
-    }
-
-    const rawWatchlist = await watchlistRes.json();
-    const rawWatched = await watchedRes.json();
-
-    const taste: TasteShow[] = [];
-    const seen = new Set<number>();
-
-    for (const item of rawWatched) {
-      const s = item.show;
-      if (!s?.ids?.trakt || seen.has(s.ids.trakt)) continue;
-      seen.add(s.ids.trakt);
-      taste.push({
-        title: s.title,
-        year: s.year,
-        genres: s.genres,
-        rating: s.rating,
-        status: s.status,
-        watched: true,
-      });
-    }
-    for (const item of rawWatchlist) {
-      const s = item.show;
-      if (!s?.ids?.trakt || seen.has(s.ids.trakt)) continue;
-      seen.add(s.ids.trakt);
-      taste.push({
-        title: s.title,
-        year: s.year,
-        genres: s.genres,
-        rating: s.rating,
-        status: s.status,
-        watched: false,
-      });
-    }
+    const taste: TasteShow[] = items.map((item) => ({
+      title: item.show.title,
+      year: item.show.year ?? null,
+      genres: item.show.genres,
+      rating: item.show.rating,
+      status: item.show.status,
+      watched: item.watched_episodes_count > 0,
+    }));
 
     if (taste.length === 0) {
       return NextResponse.json({
@@ -146,17 +78,18 @@ export async function GET(req: NextRequest) {
     const enriched: RecommendationCard[] = await Promise.all(
       recs.map(async (rec) => {
         try {
-          const params = new URLSearchParams({
-            query: rec.title,
-            extended: "full,images",
-            limit: "5",
-          });
-          const res = await fetchTrakt(
-            `${TRAKT_API_BASE}/search/show?${params.toString()}`,
-            { headers }
+          const res = await fetchSimkl(
+            apiUrl("/search/tv", { q: rec.title, extended: "full", limit: 5 }),
+            { headers: baseHeaders() }
           );
           if (!res.ok) return { ...rec, show: null };
-          const results = (await res.json()) as Array<{ show: TraktShow }>;
+          // Search returns a flat array using ids.simkl_id — normalise it and
+          // re-wrap as { show } so the matching below is unchanged.
+          const raw = await res.json();
+          const results = (Array.isArray(raw) ? raw : [])
+            .map(normalizeShow)
+            .filter(Boolean)
+            .map((show) => ({ show })) as Array<{ show: SimklShow }>;
           // Prefer exact title match (case-insensitive); fall back to first.
           const lowerTitle = rec.title.toLowerCase();
           const match =

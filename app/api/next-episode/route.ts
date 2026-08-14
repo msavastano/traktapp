@@ -1,130 +1,118 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  COOKIE_NAME,
-  fetchTrakt,
-} from "@/lib/trakt";
-import type { NextEpisodeInfo, TraktEpisode } from "@/lib/types";
+import { fetchSimkl, apiUrl, baseHeaders } from "@/lib/simkl";
+import { getSession } from "@/lib/session";
+import { cacheGet, cacheSet } from "@/lib/cache";
+import type { NextEpisodeInfo } from "@/lib/types";
 
-const TRAKT_API_BASE = "https://api.trakt.tv";
-const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
+/** Matches the episode records returned by GET /tv/episodes/{id}. */
+interface SimklEpisodeRecord {
+  title: string;
+  season: number;
+  episode: number;
+  type: string;
+  aired: boolean;
+  date?: string | null;
+  runtime?: number;
+}
 
-function toNextEpisodeInfo(ep: TraktEpisode): NextEpisodeInfo {
-  const firstAired = ep.first_aired ?? null;
+const METADATA_TTL_MS = 24 * 60 * 60 * 1000;
+
+function toNextEpisodeInfo(
+  showId: number,
+  ep: SimklEpisodeRecord
+): NextEpisodeInfo {
+  const firstAired = ep.date ?? null;
   return {
-    id: ep.ids.trakt,
+    // Synthetic — see NextEpisodeInfo in lib/types.ts. Never sent to the API.
+    id: showId * 100_000 + ep.season * 1_000 + ep.episode,
+    showId,
     season: ep.season,
-    episode: ep.number,
+    episode: ep.episode,
     title: ep.title,
     firstAired,
-    isAired: firstAired ? new Date(firstAired) <= new Date() : false,
+    isAired: ep.aired ?? (firstAired ? new Date(firstAired) <= new Date() : false),
     runtime: ep.runtime ?? undefined,
   };
 }
 
-async function fetchSeasonEpisodes(
-  slug: string,
-  season: number,
-  accessToken: string
-): Promise<TraktEpisode[] | null> {
-  const res = await fetchTrakt(
-    `${TRAKT_API_BASE}/shows/${slug}/seasons/${season}?extended=full`,
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
-        "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-        "trakt-api-version": "2",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      cache: "no-store",
-    }
-  );
+/**
+ * Simkl returns the show's entire episode list in one call, so unlike the
+ * Trakt version there's no per-season fetching or "try the next season" walk.
+ */
+async function fetchEpisodes(
+  showId: number
+): Promise<SimklEpisodeRecord[] | null> {
+  const key = `show-episodes:${showId}`;
+  const cached = cacheGet<SimklEpisodeRecord[]>(key);
+  if (cached) return cached;
+
+  const res = await fetchSimkl(apiUrl(`/tv/episodes/${showId}`), {
+    headers: baseHeaders(),
+  });
   if (!res.ok) return null;
-  return res.json();
+  const episodes = await res.json();
+  cacheSet(key, episodes, METADATA_TTL_MS);
+  return episodes;
 }
 
 /**
- * GET /api/next-episode?slug=<show-slug>&season=<n>&episode=<n>
+ * GET /api/next-episode?showId=<simkl id>&season=<n>&episode=<n>
  *
  * Returns the episode that follows the given (season, episode) for the show.
- * Used by the dashboard's skip feature to advance to the next episode after
- * skipping one (since skips aren't persisted on Trakt).
+ * Used by the dashboard's skip feature to advance past a skipped episode,
+ * since skips aren't persisted on Simkl.
  */
 export async function GET(req: Request) {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (!encoded) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ error: "Invalid token data" }, { status: 401 });
-  }
-
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ user: null }, { status: 401 });
-    }
-  }
+  const session = await getSession();
+  if (!session.ok) return session.response;
 
   const url = new URL(req.url);
-  const slug = url.searchParams.get("slug");
+  const showIdStr = url.searchParams.get("showId");
   const seasonStr = url.searchParams.get("season");
   const episodeStr = url.searchParams.get("episode");
 
-  if (!slug || !seasonStr || !episodeStr) {
+  if (!showIdStr || !seasonStr || !episodeStr) {
     return NextResponse.json(
-      { error: "slug, season, episode required" },
+      { error: "showId, season, episode required" },
       { status: 400 }
     );
   }
 
+  const showId = Number(showIdStr);
   const season = Number(seasonStr);
   const episode = Number(episodeStr);
-  if (!Number.isFinite(season) || !Number.isFinite(episode)) {
-    return NextResponse.json({ error: "invalid season/episode" }, { status: 400 });
+  if (![showId, season, episode].every(Number.isFinite)) {
+    return NextResponse.json(
+      { error: "invalid showId/season/episode" },
+      { status: 400 }
+    );
   }
 
   try {
-    const current = await fetchSeasonEpisodes(slug, season, tokens.access_token);
-    if (current) {
-      const sameSeasonNext = current.find((e) => e.number === episode + 1);
-      if (sameSeasonNext) {
-        return NextResponse.json({ next: toNextEpisodeInfo(sameSeasonNext) });
-      }
-    }
+    const episodes = await fetchEpisodes(showId);
+    if (!episodes) return NextResponse.json({ next: null });
 
-    // Try next season's episode 1
-    const nextSeason = await fetchSeasonEpisodes(
-      slug,
-      season + 1,
-      tokens.access_token
+    // Specials (season 0) are excluded so skipping never lands on one.
+    const ordered = episodes
+      .filter((e) => e.season > 0 && e.type !== "special")
+      .sort((a, b) => a.season - b.season || a.episode - b.episode);
+
+    const idx = ordered.findIndex(
+      (e) => e.season === season && e.episode === episode
     );
-    if (nextSeason && nextSeason.length > 0) {
-      const ep1 =
-        nextSeason.find((e) => e.number === 1) ?? nextSeason[0];
-      return NextResponse.json({ next: toNextEpisodeInfo(ep1) });
-    }
 
-    return NextResponse.json({ next: null });
+    // Unknown current episode: fall back to the first one that sorts after it,
+    // which also covers the next-season rollover the Trakt version did by hand.
+    const next =
+      idx >= 0
+        ? ordered[idx + 1]
+        : ordered.find(
+            (e) => e.season > season || (e.season === season && e.episode > episode)
+          );
+
+    return NextResponse.json({
+      next: next ? toNextEpisodeInfo(showId, next) : null,
+    });
   } catch (err) {
     console.error("next-episode error:", err);
     return NextResponse.json(

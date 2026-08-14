@@ -1,131 +1,157 @@
 /**
- * Enrichment logic: takes raw watchlist items from Trakt and enriches
- * each with watch progress + computed tracking status.
+ * Enrichment logic: maps Simkl list items into the TrackedShow model.
  *
- * Two API calls per show (parallel):
- *   GET /shows/{slug}/progress/watched
- *   GET /shows/{slug}/seasons?extended=full  (for episode_count per season,
- *     so we can compute episodes-remaining-in-current-season)
+ * Fetching the list itself lives in lib/sync.ts, which is bound by Simkl's
+ * activities-gate and date_from rules. This module only maps what that
+ * returns, plus two public, CDN-cached lookups per show that fill in what the
+ * library payload omits:
+ *   GET /tv/{id}           — airing status, network, genres (for `completed`)
+ *   GET /tv/episodes/{id}  — per-episode `aired` flags (for season breakdown)
+ *
+ * Both are heavily cached locally because show metadata changes rarely, so in
+ * steady state a refresh is close to one request.
  */
 
 import type {
-  TraktWatchlistItem,
-  TraktWatchedProgress,
-  TraktEpisode,
-  TraktImages,
+  SimklListItem,
+  SimklShow,
   TrackedShow,
   TrackingStatus,
   SeasonSummary,
   NextEpisodeInfo,
+
 } from "./types";
-import { fetchTrakt } from "./trakt";
+import { fetchSimkl, apiUrl, baseHeaders } from "./simkl";
+import { cacheGet, cacheSet } from "./cache";
 
-const TRAKT_API_BASE = "https://api.trakt.tv";
-const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
+/** Show metadata changes rarely — cache it far longer than the watchlist. */
+const METADATA_TTL_MS = 24 * 60 * 60 * 1000;
 
-function apiHeaders(accessToken: string): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    "User-Agent": USER_AGENT,
-    "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-    "trakt-api-version": "2",
-    Authorization: `Bearer ${accessToken}`,
-  };
+interface SimklEpisodeRecord {
+  title: string;
+  season: number;
+  episode: number;
+  type: string; // "episode" | "special"
+  aired: boolean;
+  date?: string | null;
+  runtime?: number;
+  ids?: { simkl?: number };
 }
 
-interface TraktSeasonInfo {
-  number: number;
-  episode_count: number;
-  aired_episodes: number;
-  first_aired?: string | null;
-}
+// ---------------------------------------------------------------------------
+// Remote lookups
+// ---------------------------------------------------------------------------
 
-async function fetchSeasons(
-  slug: string,
-  accessToken: string
-): Promise<TraktSeasonInfo[] | null> {
+// Library fetching lives in lib/sync.ts — it must go through the
+// /sync/activities gate and use date_from deltas, so there is deliberately no
+// "just fetch the library" helper exported from here.
+
+async function fetchShowDetail(simklId: number): Promise<SimklShow | null> {
+  const key = `show-detail:${simklId}`;
+  const cached = cacheGet<SimklShow>(key);
+  if (cached) return cached;
+
   try {
-    const res = await fetchTrakt(
-      `${TRAKT_API_BASE}/shows/${slug}/seasons?extended=full`,
-      { headers: apiHeaders(accessToken), cache: "no-store" }
-    );
+    const res = await fetchSimkl(apiUrl(`/tv/${simklId}`), {
+      headers: baseHeaders(),
+    });
     if (!res.ok) {
-      console.warn(`fetchSeasons ${slug} -> ${res.status}`);
+      console.warn(`fetchShowDetail ${simklId} -> ${res.status}`);
       return null;
     }
-    return await res.json();
+    const detail = await res.json();
+    cacheSet(key, detail, METADATA_TTL_MS);
+    return detail;
   } catch (err) {
-    console.warn(`fetchSeasons ${slug} threw:`, err);
+    console.warn(`fetchShowDetail ${simklId} threw:`, err);
     return null;
   }
 }
 
-async function fetchShowImages(
-  slug: string,
-  accessToken: string
-): Promise<TraktImages | null> {
+async function fetchEpisodes(
+  simklId: number
+): Promise<SimklEpisodeRecord[] | null> {
+  const key = `show-episodes:${simklId}`;
+  const cached = cacheGet<SimklEpisodeRecord[]>(key);
+  if (cached) return cached;
+
   try {
-    const res = await fetchTrakt(
-      `${TRAKT_API_BASE}/shows/${slug}?extended=images`,
-      { headers: apiHeaders(accessToken), cache: "no-store" }
-    );
+    const res = await fetchSimkl(apiUrl(`/tv/episodes/${simklId}`), {
+      headers: baseHeaders(),
+    });
     if (!res.ok) {
-      console.warn(`fetchShowImages ${slug} -> ${res.status}`);
+      console.warn(`fetchEpisodes ${simklId} -> ${res.status}`);
       return null;
     }
-    const data = await res.json();
-    return data?.images ?? null;
+    const episodes = await res.json();
+    cacheSet(key, episodes, METADATA_TTL_MS);
+    return episodes;
   } catch (err) {
-    console.warn(`fetchShowImages ${slug} threw:`, err);
+    console.warn(`fetchEpisodes ${simklId} threw:`, err);
     return null;
   }
 }
 
-async function fetchProgress(
-  slug: string,
-  accessToken: string
-): Promise<TraktWatchedProgress | null> {
-  try {
-    const res = await fetchTrakt(
-      `${TRAKT_API_BASE}/shows/${slug}/progress/watched?hidden=false&specials=false&count_specials=false&extended=full`,
-      { headers: apiHeaders(accessToken), cache: "no-store" }
-    );
-    if (!res.ok) {
-      console.warn(`fetchProgress ${slug} -> ${res.status}`);
-      return null;
-    }
-    return await res.json();
-  } catch (err) {
-    console.warn(`fetchProgress ${slug} threw:`, err);
-    return null;
-  }
+// ---------------------------------------------------------------------------
+// Mapping helpers
+// ---------------------------------------------------------------------------
+
+/** Parses Simkl's compact episode code, e.g. "S01E02" -> { season, episode }. */
+function parseEpisodeCode(
+  code: string | null | undefined
+): { season: number; episode: number } | null {
+  if (!code) return null;
+  const match = /^S(\d+)E(\d+)$/i.exec(code.trim());
+  if (!match) return null;
+  return { season: Number(match[1]), episode: Number(match[2]) };
 }
 
-function toNextEpisodeInfo(
-  ep: TraktEpisode | null,
+/**
+ * Builds a stable synthetic episode id. Simkl addresses episodes by
+ * (show, season, episode) on write endpoints rather than by id, so this value
+ * is only ever used as a React key / optimistic-update map key.
+ */
+function synthEpisodeId(
+  showId: number,
+  season: number,
+  episode: number
+): number {
+  return showId * 100_000 + season * 1_000 + episode;
+}
+
+function toEpisodeInfo(
+  showId: number,
+  season: number,
+  episode: number,
+  record: SimklEpisodeRecord | undefined,
+  fallbackTitle: string | null,
+  fallbackDate: string | null,
   fallbackRuntime?: number
-): NextEpisodeInfo | null {
-  if (!ep) return null;
-  const firstAired = ep.first_aired ?? null;
+): NextEpisodeInfo {
+  const firstAired = record?.date ?? fallbackDate ?? null;
   return {
-    id: ep.ids.trakt,
-    season: ep.season,
-    episode: ep.number,
-    title: ep.title,
+    id: synthEpisodeId(showId, season, episode),
+    showId,
+    season,
+    episode,
+    title: record?.title ?? fallbackTitle ?? `Episode ${episode}`,
     firstAired,
-    isAired: firstAired ? new Date(firstAired) <= new Date() : false,
-    runtime: ep.runtime ?? fallbackRuntime,
+    // Prefer Simkl's own `aired` flag; fall back to comparing the date.
+    isAired:
+      record?.aired ?? (firstAired ? new Date(firstAired) <= new Date() : false),
+    runtime: record?.runtime ?? fallbackRuntime,
   };
 }
 
 function computeTrackingStatus(
-  show: TraktWatchlistItem["show"],
-  progress: TraktWatchedProgress | null
+  showStatus: string | undefined,
+  aired: number,
+  completed: number,
+  nextAirDate: string | null
 ): { status: TrackingStatus; label: string } {
-  const showEnded =
-    show.status === "ended" || show.status === "canceled";
-  const aired = progress?.aired ?? 0;
-  const completed = progress?.completed ?? 0;
+  // Simkl reports these lowercase.
+  const normalized = showStatus?.toLowerCase();
+  const showEnded = normalized === "ended" || normalized === "canceled";
 
   if (completed === 0) {
     return {
@@ -144,15 +170,15 @@ function computeTrackingStatus(
   }
 
   if (!caughtUp) {
+    const remaining = aired - completed;
     return {
       status: "behind",
-      label: `${aired - completed} unwatched episode${aired - completed !== 1 ? "s" : ""}`,
+      label: `${remaining} unwatched episode${remaining !== 1 ? "s" : ""}`,
     };
   }
 
-  const upcomingAirDate = progress?.next_episode?.first_aired ?? null;
-  if (upcomingAirDate) {
-    const airDate = new Date(upcomingAirDate);
+  if (nextAirDate) {
+    const airDate = new Date(nextAirDate);
     if (airDate > new Date()) {
       const formatted = airDate.toLocaleDateString("en-US", {
         month: "short",
@@ -171,77 +197,144 @@ function computeTrackingStatus(
   };
 }
 
-export async function enrichWatchlistItem(
-  item: TraktWatchlistItem,
-  accessToken: string
+// ---------------------------------------------------------------------------
+// Enrichment
+// ---------------------------------------------------------------------------
+
+export async function enrichListItem(
+  item: SimklListItem
 ): Promise<TrackedShow> {
-  const slug = item.show.ids.slug;
-  const needsImages = !item.show.images?.poster?.length;
-  const [progress, seasonsRaw, images] = await Promise.all([
-    fetchProgress(slug, accessToken),
-    fetchSeasons(slug, accessToken),
-    needsImages ? fetchShowImages(slug, accessToken) : Promise.resolve(null),
+  const simklId = item.show.ids.simkl;
+
+  const [detail, episodes] = await Promise.all([
+    fetchShowDetail(simklId),
+    fetchEpisodes(simklId),
   ]);
-  const show = images ? { ...item.show, images } : item.show;
-  const aired = progress?.aired ?? 0;
-  const completed = progress?.completed ?? 0;
+
+  // The list item's show object carries only title/year/poster/ids, so merge
+  // the detail record over it for status, network, genres and runtime.
+  const show: SimklShow = { ...item.show, ...(detail ?? {}), ids: item.show.ids };
+
+  // Simkl already gives us library-wide counts; trust them over recomputing,
+  // since they account for specials and cross-mapped anime numbering.
+  const completed = item.watched_episodes_count ?? 0;
+  const aired = Math.max(
+    0,
+    (item.total_episodes_count ?? 0) - (item.not_aired_episodes_count ?? 0)
+  );
   const unwatchedCount = Math.max(0, aired - completed);
 
-  const seasons: SeasonSummary[] = (progress?.seasons ?? [])
-    .filter((s) => s.number > 0)
-    .map((s) => ({
-      number: s.number,
-      aired: s.aired,
-      completed: s.completed,
-      isFullyWatched: s.completed >= s.aired,
-    }));
-
+  // Watched map: "season-episode" -> true.
+  //
+  // Season 0 is skipped: Simkl reports specials there (The Boys alone has 74),
+  // and its own watched_episodes_count excludes them. Including them would add
+  // dozens of bogus keys per show and could render a special as watched.
   const watchedEpisodes: Record<string, boolean> = {};
-  if (progress?.seasons) {
-    for (const season of progress.seasons) {
-      if (season.episodes) {
-        for (const ep of season.episodes) {
-          if (ep.completed) {
-            watchedEpisodes[`${season.number}-${ep.number}`] = true;
-          }
-        }
-      }
+  for (const season of item.seasons ?? []) {
+    if (season.number === 0) continue;
+    for (const ep of season.episodes ?? []) {
+      watchedEpisodes[`${season.number}-${ep.number}`] = true;
     }
   }
 
-  // Find the currently-releasing season: a season that has started airing
-  // (aired_episodes > 0) but isn't fully aired yet. Skips seasons that
-  // haven't begun (aired_episodes === 0 — entire season is "left", which is
-  // not useful info) and fully-aired seasons. Excludes specials.
+  // Per-season breakdown. Aired counts come from the episode list's `aired`
+  // flags; specials (season 0) are excluded to match the previous behaviour.
+  const realEpisodes = (episodes ?? []).filter(
+    (e) => e.season > 0 && e.type !== "special"
+  );
+  const seasonNumbers = [...new Set(realEpisodes.map((e) => e.season))].sort(
+    (a, b) => a - b
+  );
+  const seasons: SeasonSummary[] = seasonNumbers.map((number) => {
+    const inSeason = realEpisodes.filter((e) => e.season === number);
+    const airedCount = inSeason.filter((e) => e.aired).length;
+    const completedCount = inSeason.filter(
+      (e) => watchedEpisodes[`${number}-${e.episode}`]
+    ).length;
+    return {
+      number,
+      aired: airedCount,
+      completed: completedCount,
+      isFullyWatched: airedCount > 0 && completedCount >= airedCount,
+    };
+  });
+
+  // The currently-releasing season: the highest season that has started airing
+  // but still has unaired episodes scheduled.
   let upcomingInSeason: { season: number; remaining: number } | null = null;
-  if (seasonsRaw) {
-    const partial = seasonsRaw
-      .filter(
-        (s) =>
-          s.number > 0 &&
-          s.episode_count > 0 &&
-          s.aired_episodes > 0 &&
-          s.aired_episodes < s.episode_count
-      )
-      .sort((a, b) => b.number - a.number);
-    const target = partial[0];
-    if (target) {
-      upcomingInSeason = {
-        season: target.number,
-        remaining: target.episode_count - target.aired_episodes,
-      };
+  for (const number of [...seasonNumbers].reverse()) {
+    const inSeason = realEpisodes.filter((e) => e.season === number);
+    const airedCount = inSeason.filter((e) => e.aired).length;
+    const remaining = inSeason.length - airedCount;
+    if (airedCount > 0 && remaining > 0) {
+      upcomingInSeason = { season: number, remaining };
+      break;
     }
   }
 
-  const { status, label } = computeTrackingStatus(show, progress);
-  // Trakt sometimes returns placeholder next-episode entries for future
-  // seasons (no first_aired, title like "Episode #2.1"). Drop them — they're
-  // not real scheduled episodes and shouldn't appear as "Next to watch".
-  const rawNext = progress?.next_episode ?? null;
-  const nextEp = rawNext && rawNext.first_aired ? rawNext : null;
+  const episodeAt = (season: number, episode: number) =>
+    realEpisodes.find((e) => e.season === season && e.episode === episode);
+
+  // Next episode to watch: prefer the rich next_to_watch_info (only populated
+  // for `watching` items), then fall back to parsing the compact code.
+  const nextInfo = item.next_to_watch_info ?? null;
+  const nextCoords =
+    nextInfo != null
+      ? { season: nextInfo.season, episode: nextInfo.episode }
+      : parseEpisodeCode(item.next_to_watch);
+
+  const nextEpisode = nextCoords
+    ? toEpisodeInfo(
+        simklId,
+        nextCoords.season,
+        nextCoords.episode,
+        episodeAt(nextCoords.season, nextCoords.episode),
+        nextInfo?.title ?? null,
+        nextInfo?.date ?? null,
+        show.runtime
+      )
+    : null;
+
+  const lastCoords = parseEpisodeCode(item.last_watched);
+  const lastEpisode = lastCoords
+    ? toEpisodeInfo(
+        simklId,
+        lastCoords.season,
+        lastCoords.episode,
+        episodeAt(lastCoords.season, lastCoords.episode),
+        null,
+        null,
+        show.runtime
+      )
+    : null;
+
+  // The show's next globally-upcoming episode — the soonest unaired one,
+  // regardless of where the user is in the run.
+  const upcomingRecord = realEpisodes
+    .filter((e) => !e.aired && e.date)
+    .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))[0];
+  const upcomingEpisode = upcomingRecord
+    ? toEpisodeInfo(
+        simklId,
+        upcomingRecord.season,
+        upcomingRecord.episode,
+        upcomingRecord,
+        null,
+        null,
+        show.runtime
+      )
+    : null;
+
+  const { status, label } = computeTrackingStatus(
+    show.status,
+    aired,
+    completed,
+    upcomingEpisode?.firstAired ?? null
+  );
 
   return {
-    listedAt: item.listed_at,
+    isEnriched: true,
+    listedAt: item.added_to_watchlist_at ?? item.last_watched_at ?? "",
     show,
     progress: {
       aired,
@@ -253,10 +346,10 @@ export async function enrichWatchlistItem(
       totalSeasons: seasons.length,
       seasons,
 
-      lastWatchedAt: progress?.last_watched_at ?? null,
-      lastEpisode: toNextEpisodeInfo(progress?.last_episode ?? null, show.runtime),
-      nextEpisode: toNextEpisodeInfo(nextEp, show.runtime),
-      upcomingEpisode: toNextEpisodeInfo(nextEp, show.runtime),
+      lastWatchedAt: item.last_watched_at ?? null,
+      lastEpisode,
+      nextEpisode,
+      upcomingEpisode,
       upcomingInSeason,
       watchedEpisodes,
     },
@@ -265,27 +358,27 @@ export async function enrichWatchlistItem(
   };
 }
 
-export async function enrichWatchlist(
-  items: TraktWatchlistItem[],
-  accessToken: string,
-  concurrency = 2
+/**
+ * Enriches a whole library.
+ *
+ * Concurrency stays low deliberately: Simkl caps apps at 10 GET/sec per
+ * client_id and suspends keys that sustain overage without warning. The
+ * per-show lookups are cached for a day, so warm runs barely touch the network.
+ */
+export async function enrichAll(
+  items: SimklListItem[],
+  concurrency = 4
 ): Promise<TrackedShow[]> {
   const results: TrackedShow[] = [];
 
   for (let i = 0; i < items.length; i += concurrency) {
-    if (i > 0) {
-      // Add a small throttle delay between batches to avoid rate limit spikes
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
     const batch = items.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(
-      batch.map((item) => enrichWatchlistItem(item, accessToken))
-    );
+    const settled = await Promise.allSettled(batch.map(enrichListItem));
     for (const r of settled) {
       if (r.status === "fulfilled") {
         results.push(r.value);
       } else {
-        console.error("enrichWatchlistItem failed:", r.reason);
+        console.error("enrichListItem failed:", r.reason);
       }
     }
   }

@@ -58,3 +58,13 @@ When changing status semantics, update **both** the `TrackingStatus` union in `l
 ### Marking episodes watched
 
 `POST /api/history` with `{ episodeId }` posts to Trakt's `sync/history`. The dashboard calls this then re-fetches `/api/watchlist` to get updated progress (no optimistic updates).
+
+## ⚠️ Migration in progress: Trakt → Simkl
+
+This project is mid-migration from the Trakt API to Simkl. **The architecture
+described above is the old Trakt design and is partly stale.** The build does
+not currently pass.
+
+Read [MIGRATION.md](MIGRATION.md) before working on this repo — it covers what
+has been ported, the Simkl API rules that are enforced by client_id suspension,
+verified API shapes, and the ordered list of remaining work.
