@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import type { TraktShow } from "@/lib/types";
+import type { SimklShow } from "@/lib/types";
+import { posterFrom, simklShowUrl } from "@/lib/images";
 import {
   GEMINI_KEY_HEADER,
   MISSING_KEY_ERROR,
@@ -18,7 +19,7 @@ interface RecommendationCard {
   year: number;
   reason: string;
   genres: string[];
-  show: TraktShow | null;
+  show: SimklShow | null;
 }
 
 interface RecResponse {
@@ -30,10 +31,7 @@ interface RecResponse {
   detail?: string;
 }
 
-const posterUrl = (show: TraktShow | null): string | null => {
-  const p = show?.images?.poster?.[0];
-  return p ? `https://${p.replace(/^https?:\/\//, "")}` : null;
-};
+const posterUrl = (show: SimklShow | null): string | null => posterFrom(show);
 
 export default function RecommendationsPage() {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -189,9 +187,9 @@ export default function RecommendationsPage() {
             <div className="watchlist-grid">
               {data.recommendations.map((rec, index) => {
                 const show = rec.show;
-                const traktId = show?.ids?.trakt;
-                const alreadyAdded = traktId ? addedIds.has(traktId) : false;
-                const adding = traktId ? addingIds[traktId] : false;
+                const simklId = show?.ids?.simkl;
+                const alreadyAdded = simklId ? addedIds.has(simklId) : false;
+                const adding = simklId ? addingIds[simklId] : false;
                 return (
                   <div
                     key={`${rec.title}-${rec.year}-${index}`}
@@ -215,7 +213,22 @@ export default function RecommendationsPage() {
                     <div className="watchlist-card-body">
                       <div className="watchlist-card-header">
                         <div className="watchlist-card-title-row">
-                          <h3 className="watchlist-card-title">{rec.title}</h3>
+                          <h3 className="watchlist-card-title">
+                            {/* Only linkable once the Gemini pick has been
+                                resolved to a real Simkl show. */}
+                            {show?.ids?.simkl ? (
+                              <a
+                                className="simkl-link"
+                                href={simklShowUrl(show.ids.simkl, show.ids.slug)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {rec.title}
+                              </a>
+                            ) : (
+                              rec.title
+                            )}
+                          </h3>
                           {rec.year && (
                             <span className="watchlist-card-year">{rec.year}</span>
                           )}
@@ -254,11 +267,11 @@ export default function RecommendationsPage() {
                       </div>
 
                       <div className="episode-info-row">
-                        {traktId ? (
+                        {simklId ? (
                           <button
                             className="mark-watched-btn"
                             disabled={alreadyAdded || adding}
-                            onClick={() => handleAdd(traktId)}
+                            onClick={() => handleAdd(simklId)}
                           >
                             {alreadyAdded
                               ? "✓ Added"

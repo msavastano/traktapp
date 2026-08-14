@@ -1,60 +1,38 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  COOKIE_NAME,
-  fetchTrakt,
-} from "@/lib/trakt";
+import { fetchSimkl, apiUrl, authHeaders } from "@/lib/simkl";
+import { getSession } from "@/lib/session";
 import { cacheDelete, watchlistKey } from "@/lib/cache";
 
-const TRAKT_API_BASE = "https://api.trakt.tv";
-const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
-
-async function getValidTokens() {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-  if (!encoded) return { error: "Not authenticated", status: 401 as const };
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return { error: "Invalid token data", status: 401 as const };
-  }
-
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return { error: "Token refresh failed", status: 401 as const };
-    }
-  }
-
-  return { tokens };
-}
-
-function buildPayload(body: {
-  episodeId?: number;
+interface HistoryBody {
   showId?: number;
   season?: number;
-}) {
-  const { episodeId, showId, season } = body;
-  if (episodeId) return { episodes: [{ ids: { trakt: episodeId } }] };
-  if (showId && typeof season === "number") {
-    return { shows: [{ ids: { trakt: showId }, seasons: [{ number: season }] }] };
+  episode?: number;
+}
+
+/**
+ * Simkl addresses episodes by (show, season, episode) rather than by an
+ * episode id, so all three shapes hang off the show's ids.
+ */
+function buildPayload(body: HistoryBody) {
+  const { showId, season, episode } = body;
+  if (!showId) return null;
+
+  const ids = { simkl: showId };
+
+  // One episode
+  if (typeof season === "number" && typeof episode === "number") {
+    return {
+      shows: [{ ids, seasons: [{ number: season, episodes: [{ number: episode }] }] }],
+    };
   }
-  if (showId) return { shows: [{ ids: { trakt: showId } }] };
-  return null;
+
+  // A whole season — omitting `episodes` marks every episode in it
+  if (typeof season === "number") {
+    return { shows: [{ ids, seasons: [{ number: season }] }] };
+  }
+
+  // The whole show
+  return { shows: [{ ids }] };
 }
 
 /**
@@ -62,9 +40,9 @@ function buildPayload(body: {
  * DELETE /api/history — removes from history (unwatch).
  *
  * Body shapes (both methods):
- *   { episodeId: number }                    — one episode
- *   { showId: number, season: number }       — entire season of a show
- *   { showId: number }                       — entire show (every aired episode)
+ *   { showId, season, episode }  — one episode
+ *   { showId, season }           — entire season of a show
+ *   { showId }                   — entire show (every aired episode)
  */
 export async function POST(req: Request) {
   return handleHistory(req, "add");
@@ -75,36 +53,29 @@ export async function DELETE(req: Request) {
 }
 
 async function handleHistory(req: Request, action: "add" | "remove") {
-  const auth = await getValidTokens();
-  if ("error" in auth) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status });
-  }
-  const { tokens } = auth;
+  const session = await getSession();
+  if (!session.ok) return session.response;
+  const { tokens } = session;
 
   try {
-    const body = await req.json();
+    const body = (await req.json()) as HistoryBody;
     const payload = buildPayload(body);
     if (!payload) {
-      return NextResponse.json(
-        { error: "episodeId or showId is required" },
-        { status: 400 }
+      // Logged because a silently-rejected body is otherwise invisible in the
+      // server log and surfaces only as a generic client-side failure.
+      console.error(
+        `Sync history ${action}: rejected body, showId missing:`,
+        JSON.stringify(body)
       );
+      return NextResponse.json({ error: "showId is required" }, { status: 400 });
     }
 
-    const url =
-      action === "add"
-        ? `${TRAKT_API_BASE}/sync/history`
-        : `${TRAKT_API_BASE}/sync/history/remove`;
+    const path =
+      action === "add" ? "/sync/history" : "/sync/history/remove";
 
-    const res = await fetchTrakt(url, {
+    const res = await fetchSimkl(apiUrl(path), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
-        "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-        "trakt-api-version": "2",
-        Authorization: `Bearer ${tokens.access_token}`,
-      },
+      headers: authHeaders(tokens.access_token),
       body: JSON.stringify(payload),
     });
 
@@ -112,7 +83,10 @@ async function handleHistory(req: Request, action: "add" | "remove") {
       const text = await res.text();
       console.error(`Sync history ${action} failed (${res.status}):`, text);
       return NextResponse.json(
-        { error: action === "add" ? "Failed to mark as watched" : "Failed to unwatch" },
+        {
+          error:
+            action === "add" ? "Failed to mark as watched" : "Failed to unwatch",
+        },
         { status: res.status }
       );
     }
@@ -123,7 +97,10 @@ async function handleHistory(req: Request, action: "add" | "remove") {
   } catch (error) {
     console.error(`Sync history ${action} error:`, error);
     return NextResponse.json(
-      { error: action === "add" ? "Failed to mark as watched" : "Failed to unwatch" },
+      {
+        error:
+          action === "add" ? "Failed to mark as watched" : "Failed to unwatch",
+      },
       { status: 500 }
     );
   }

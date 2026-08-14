@@ -1,27 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  COOKIE_NAME,
-  fetchTrakt,
-} from "@/lib/trakt";
-
-const TRAKT_API_BASE = "https://api.trakt.tv";
-const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
+import { fetchSimkl, apiUrl, baseHeaders, normalizeShow } from "@/lib/simkl";
 
 const VALID_TYPES = ["trending", "anticipated"] as const;
 type DiscoverType = (typeof VALID_TYPES)[number];
 
 /**
+ * Simkl has no single "anticipated" feed; upcoming premieres is the closest
+ * equivalent to Trakt's most-listed-but-unreleased ranking.
+ */
+const ENDPOINTS: Record<DiscoverType, string> = {
+  trending: "/tv/trending",
+  anticipated: "/tv/premieres/soon",
+};
+
+/**
  * GET /api/discover?type=trending|anticipated
  *
- * Returns Trakt's trending or anticipated shows.
- * Auth not required by Trakt, but we attach a bearer token when available.
+ * Public endpoints — no token handling needed.
  *
- * Response items: trending -> { watchers, show }, anticipated -> { list_count, show }
+ * Response items are `{ show }` entries, matching what the discover UI
+ * consumes. Note these feeds return `ids.simkl_id` rather than `ids.simkl`,
+ * which normalizeShow reconciles.
  */
 export async function GET(req: NextRequest) {
   const typeParam = req.nextUrl.searchParams.get("type") ?? "trending";
@@ -30,50 +29,12 @@ export async function GET(req: NextRequest) {
   }
   const type = typeParam as DiscoverType;
 
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  let accessToken: string | null = null;
-  if (encoded) {
-    let tokens = decodeTokens(encoded);
-    if (tokens) {
-      if (isTokenExpired(tokens)) {
-        try {
-          tokens = await refreshAccessToken(tokens.refresh_token);
-          cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            sameSite: "lax",
-            maxAge: 90 * 24 * 60 * 60,
-            path: "/",
-          });
-        } catch {
-          // fall through unauthenticated
-        }
-      }
-      accessToken = tokens?.access_token ?? null;
-    }
-  }
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "User-Agent": USER_AGENT,
-    "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-    "trakt-api-version": "2",
-  };
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-
-  const params = new URLSearchParams({
-    extended: "full,images",
-    page: "1",
-    limit: "40",
-  });
-
   try {
-    const res = await fetchTrakt(
-      `${TRAKT_API_BASE}/shows/${type}?${params.toString()}`,
-      { headers }
+    const res = await fetchSimkl(
+      apiUrl(ENDPOINTS[type], { extended: "full", limit: 40 }),
+      { headers: baseHeaders() }
     );
+
     if (!res.ok) {
       const text = await res.text();
       console.error(`Discover ${type} failed (${res.status}):`, text);
@@ -82,8 +43,14 @@ export async function GET(req: NextRequest) {
         { status: res.status }
       );
     }
+
     const data = await res.json();
-    return NextResponse.json({ shows: data });
+    const shows = (Array.isArray(data) ? data : [])
+      .map(normalizeShow)
+      .filter(Boolean)
+      .map((show) => ({ show }));
+
+    return NextResponse.json({ shows });
   } catch (error) {
     console.error("Discover error:", error);
     return NextResponse.json(

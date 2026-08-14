@@ -1,22 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  COOKIE_NAME,
-} from "@/lib/trakt";
+import { getSession } from "@/lib/session";
 import { generateShowNews, RateLimitError } from "@/lib/gemini";
 import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
 import { getCachedNews, setCachedNews, newsCacheKey } from "@/lib/news-cache";
 
 export async function GET(req: NextRequest) {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-  if (!encoded) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
+  // Login is required to reach this, but no Simkl call is made here — the
+  // session is only used as a gate on the user's own Gemini key.
+  const session = await getSession();
+  if (!session.ok) return session.response;
 
   const geminiKey = req.headers.get(GEMINI_KEY_HEADER)?.trim();
   if (!geminiKey) {
@@ -24,28 +16,6 @@ export async function GET(req: NextRequest) {
       { error: MISSING_KEY_ERROR, detail: "Add your Gemini API key to fetch the latest news." },
       { status: 400 }
     );
-  }
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ error: "Invalid token data" }, { status: 401 });
-  }
-
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ error: "Auth expired" }, { status: 401 });
-    }
   }
 
   const title = req.nextUrl.searchParams.get("title")?.trim();

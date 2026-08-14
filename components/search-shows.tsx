@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { TraktShow } from "@/lib/types";
+import type { SimklShow } from "@/lib/types";
+import { simklShowUrl } from "@/lib/images";
 
 interface SearchResult {
   type: "show";
   score: number;
-  show: TraktShow;
+  show: SimklShow;
 }
 
 interface Props {
@@ -123,13 +124,21 @@ export function SearchShows({ existingIds, onAdded }: Props) {
       {results.length > 0 && (
         <div className="search-results">
           {results.map(({ show }) => {
-            const id = show.ids.trakt;
+            const id = show.ids.simkl;
             const inWatchlist = existingIds.has(id) || addedIds.has(id);
             return (
               <div key={id} className="search-result-card">
                 <div className="search-result-header">
                   <h4 className="search-result-title">
-                    {show.title}
+                    {/* Required link-back — see Simkl API rules. */}
+                    <a
+                      className="simkl-link"
+                      href={simklShowUrl(id, show.ids.slug)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {show.title}
+                    </a>
                     {show.year && (
                       <span className="search-result-year"> ({show.year})</span>
                     )}
@@ -148,10 +157,10 @@ export function SearchShows({ existingIds, onAdded }: Props) {
                 <div className="search-result-footer">
                   <div className="search-result-meta">
                     {show.network && <span>📡 {show.network}</span>}
-                    {show.aired_episodes != null && (
+                    {show.total_episodes != null && (
                       <span>
-                        📺 {show.aired_episodes} ep
-                        {show.aired_episodes !== 1 ? "s" : ""}
+                        📺 {show.total_episodes} ep
+                        {show.total_episodes !== 1 ? "s" : ""}
                       </span>
                     )}
                     {show.rating && <span>⭐ {show.rating.toFixed(1)}</span>}

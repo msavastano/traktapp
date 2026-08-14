@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import type { TraktShow } from "@/lib/types";
+import type { SimklShow } from "@/lib/types";
+import { posterFrom, simklShowUrl } from "@/lib/images";
 
 type DiscoverTab = "trending" | "anticipated";
 
 interface DiscoverItem {
   watchers?: number;
   list_count?: number;
-  show: TraktShow;
+  show: SimklShow;
 }
 
 interface Props {
@@ -17,10 +18,7 @@ interface Props {
   onAdded: () => void;
 }
 
-const posterUrl = (show: TraktShow): string | null => {
-  const p = show.images?.poster?.[0];
-  return p ? `https://${p.replace(/^https?:\/\//, "")}` : null;
-};
+const posterUrl = (show: SimklShow): string | null => posterFrom(show);
 
 export function DiscoverShows({ existingIds, onAdded }: Props) {
   const [subTab, setSubTab] = useState<DiscoverTab>("trending");
@@ -100,6 +98,20 @@ export function DiscoverShows({ existingIds, onAdded }: Props) {
         </button>
       </div>
 
+      {/* Required attribution — Simkl's API rules ask that trending data be
+          credited to them wherever it's shown. */}
+      <p className="simkl-attribution">
+        Trending and anticipated data from{" "}
+        <a
+          className="simkl-link"
+          href="https://simkl.com"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Simkl
+        </a>
+      </p>
+
       {error && <div className="search-error">{error}</div>}
 
       {loading ? (
@@ -128,7 +140,7 @@ export function DiscoverShows({ existingIds, onAdded }: Props) {
         <div className="watchlist-grid">
           {items.map((item, index) => {
             const { show } = item;
-            const id = show.ids.trakt;
+            const id = show.ids.simkl;
             const inWatchlist = existingIds.has(id) || addedIds.has(id);
             const poster = posterUrl(show);
 
@@ -157,7 +169,16 @@ export function DiscoverShows({ existingIds, onAdded }: Props) {
                   <div className="watchlist-card-header">
                     <div className="watchlist-card-title-row">
                       <h3 className="watchlist-card-title">
-                        {show.title || "Unknown"}
+                        {/* Simkl's API rules require linking back to the
+                            specific item page wherever their data appears. */}
+                        <a
+                          className="simkl-link"
+                          href={simklShowUrl(show.ids.simkl, show.ids.slug)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {show.title || "Unknown"}
+                        </a>
                       </h3>
                       {show.year && (
                         <span className="watchlist-card-year">{show.year}</span>

@@ -1,14 +1,8 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  COOKIE_NAME,
-  fetchTrakt,
-} from "@/lib/trakt";
-import { enrichWatchlist, enrichWatchlistItem } from "@/lib/enrich";
+import { fetchSimkl, apiUrl, authHeaders } from "@/lib/simkl";
+import { getSession } from "@/lib/session";
+import { enrichAll, enrichListItem } from "@/lib/enrich";
+import { syncLibrary } from "@/lib/sync";
 import { cacheGet, cacheSet, cacheDelete, watchlistKey } from "@/lib/cache";
 import type { TrackedShow } from "@/lib/types";
 
@@ -22,48 +16,23 @@ interface WatchlistPayload {
   };
 }
 
-const TRAKT_API_BASE = "https://api.trakt.tv";
-const USER_AGENT = "TraktApp/1.0 (Next.js; +http://localhost:3000)";
-
 /**
  * GET /api/watchlist
  *
- * Returns the authenticated user's TV show watchlist enriched with:
+ * Returns the authenticated user's TV library enriched with:
  *   - Per-show watch progress (aired vs completed)
  *   - Per-season breakdown
  *   - Next/upcoming episode info
  *   - Computed tracking status
+ *
+ * The watchlist and watched-history no longer need separate calls and manual
+ * de-duplication: Simkl's /sync/all-items returns one row per show carrying
+ * both the list status and the watch counts.
  */
 export async function GET(req: Request) {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (!encoded) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ error: "Invalid token data" }, { status: 401 });
-  }
-
-  // Auto-refresh if expired
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ user: null }, { status: 401 });
-    }
-  }
+  const session = await getSession();
+  if (!session.ok) return session.response;
+  const { tokens } = session;
 
   const { searchParams } = new URL(req.url);
   const shouldStream = searchParams.get("stream") === "true";
@@ -75,86 +44,25 @@ export async function GET(req: Request) {
       return NextResponse.json(cached, { headers: { "x-cache": "HIT" } });
     }
 
-    const headers = {
-      "Content-Type": "application/json",
-      "User-Agent": USER_AGENT,
-      "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-      "trakt-api-version": "2",
-      Authorization: `Bearer ${tokens.access_token}`,
-    };
+    // Goes through the activities gate: skips the library call entirely when
+    // nothing changed, and uses date_from deltas otherwise.
+    const { items } = await syncLibrary(
+      tokens.access_token,
+      `sync:${tokens.access_token}`
+    );
 
-    // Step 1: Fetch the raw watchlist AND watched shows with extended info
-    const [watchlistRes, watchedRes] = await Promise.all([
-      fetchTrakt(
-        `${TRAKT_API_BASE}/users/me/watchlist/shows?page=1&limit=100&extended=full,images`,
-        { headers }
-      ),
-      fetchTrakt(
-        `${TRAKT_API_BASE}/sync/watched/shows?page=1&limit=100&extended=full,images`,
-        { headers }
-      )
-    ]);
-
-    if (!watchlistRes.ok) {
-      const text = await watchlistRes.text();
-      console.error(`Watchlist fetch failed (${watchlistRes.status}):`, text);
-      return NextResponse.json(
-        { error: "Failed to fetch watchlist" },
-        { status: watchlistRes.status }
-      );
-    }
-    
-    if (!watchedRes.ok) {
-      const text = await watchedRes.text();
-      console.error(`Watched fetch failed (${watchedRes.status}):`, text);
-      return NextResponse.json(
-        { error: "Failed to fetch watched shows" },
-        { status: watchedRes.status }
-      );
-    }
-
-    const rawWatchlist = await watchlistRes.json();
-    const rawWatched = await watchedRes.json();
-
-    // Map watched items to the same structure as watchlist items
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mappedWatched = rawWatched.map((item: any) => ({
-      listed_at: item.last_watched_at || item.last_updated_at || new Date().toISOString(),
-      type: "show",
-      show: item.show,
-    }));
-
-    // Combine them, deduplicating by Trakt ID
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const showMap = new Map<number, any>();
-    
-    for (const item of rawWatchlist) {
-      if (item.show?.ids?.trakt) {
-        showMap.set(item.show.ids.trakt, { ...item, fromWatchlist: true });
-      }
-    }
-    
-    for (const item of mappedWatched) {
-      if (item.show?.ids?.trakt) {
-        const existing = showMap.get(item.show.ids.trakt);
-        showMap.set(item.show.ids.trakt, {
-          ...item,
-          fromWatchlist: existing ? existing.fromWatchlist : false,
-          fromWatched: true,
-        });
-      }
-    }
-
-    const combinedList = Array.from(showMap.values());
-
-    // Sort combined list by listed_at/last_watched_at descending
-    combinedList.sort((a, b) => new Date(b.listed_at).getTime() - new Date(a.listed_at).getTime());
+    // Most recently added / watched first.
+    items.sort((a, b) => {
+      const aDate = a.last_watched_at ?? a.added_to_watchlist_at ?? "";
+      const bDate = b.last_watched_at ?? b.added_to_watchlist_at ?? "";
+      return bDate.localeCompare(aDate);
+    });
 
     const paginationPayload = {
-      page: watchlistRes.headers.get("x-pagination-page"),
-      limit: watchlistRes.headers.get("x-pagination-limit"),
-      pageCount: watchlistRes.headers.get("x-pagination-page-count"),
-      itemCount: String(combinedList.length),
+      page: "1",
+      limit: null,
+      pageCount: "1",
+      itemCount: String(items.length),
     };
 
     if (shouldStream) {
@@ -163,29 +71,32 @@ export async function GET(req: Request) {
 
       const readableStream = new ReadableStream({
         async start(controller) {
-          // Send initial metadata packet
+          // Send initial metadata packet so the grid can render immediately.
           const initialMetadata = {
             type: "metadata",
-            shows: combinedList.map((item) => {
-              const isWatched = item.fromWatched === true;
-              return {
-                listedAt: item.listed_at,
-                show: item.show,
-                trackingStatus: isWatched ? "behind" : "not_started",
-                statusLabel: isWatched ? "Loading progress..." : "Not started · Loading...",
-                isEnriched: false,
-              };
-            }),
+            shows: items.map((item) => ({
+              listedAt: item.added_to_watchlist_at,
+              show: item.show,
+              trackingStatus:
+                item.watched_episodes_count > 0 ? "behind" : "not_started",
+              statusLabel:
+                item.watched_episodes_count > 0
+                  ? "Loading progress..."
+                  : "Not started · Loading...",
+              isEnriched: false,
+            })),
             pagination: paginationPayload,
           };
-          controller.enqueue(encoder.encode(JSON.stringify(initialMetadata) + "\n"));
+          controller.enqueue(
+            encoder.encode(JSON.stringify(initialMetadata) + "\n")
+          );
 
-          if (combinedList.length === 0) {
+          if (items.length === 0) {
             controller.close();
             return;
           }
 
-          const queue = [...combinedList];
+          const queue = [...items];
           const enrichedShowsMap = new Map<number, TrackedShow>();
 
           const runWorker = async () => {
@@ -193,20 +104,16 @@ export async function GET(req: Request) {
               const item = queue.shift();
               if (!item) break;
               try {
-                // Add a small throttle delay before processing to stagger requests
-                await new Promise((resolve) => setTimeout(resolve, 100));
+                const enriched = await enrichListItem(item);
                 if (aborted) break;
 
-                const enriched = await enrichWatchlistItem(item, tokens.access_token);
-                if (aborted) break;
-
-                enrichedShowsMap.set(item.show.ids.trakt, enriched);
+                enrichedShowsMap.set(item.show.ids.simkl, enriched);
 
                 controller.enqueue(
                   encoder.encode(
                     JSON.stringify({
                       type: "enrich",
-                      showId: item.show.ids.trakt,
+                      showId: item.show.ids.simkl,
                       enriched,
                     }) + "\n"
                   )
@@ -218,7 +125,7 @@ export async function GET(req: Request) {
                   encoder.encode(
                     JSON.stringify({
                       type: "error",
-                      showId: item.show.ids.trakt,
+                      showId: item.show.ids.simkl,
                       error: "Failed to enrich",
                     }) + "\n"
                   )
@@ -227,21 +134,19 @@ export async function GET(req: Request) {
             }
           };
 
-          const CONCURRENCY = 2;
+          const CONCURRENCY = 4;
           const workers = Array.from({ length: CONCURRENCY }, () => runWorker());
           await Promise.all(workers);
 
-          // Cache the full result if all completed without abort
           if (!aborted) {
-            const finalEnrichedShows = combinedList
-              .map((item) => enrichedShowsMap.get(item.show.ids.trakt))
+            const finalEnrichedShows = items
+              .map((item) => enrichedShowsMap.get(item.show.ids.simkl))
               .filter(Boolean) as TrackedShow[];
 
-            const payload: WatchlistPayload = {
+            cacheSet(cacheKey, {
               shows: finalEnrichedShows,
               pagination: paginationPayload,
-            };
-            cacheSet(cacheKey, payload);
+            });
           }
 
           controller.close();
@@ -255,14 +160,13 @@ export async function GET(req: Request) {
         headers: {
           "Content-Type": "application/x-ndjson; charset=utf-8",
           "Cache-Control": "no-cache, no-transform",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
           "x-cache": "MISS",
         },
       });
     }
 
-    // Step 2: Enrich each show with progress + tracking status (standard JSON flow)
-    const enriched = await enrichWatchlist(combinedList, tokens.access_token);
+    const enriched = await enrichAll(items);
 
     const payload: WatchlistPayload = {
       shows: enriched,
@@ -283,38 +187,13 @@ export async function GET(req: Request) {
 /**
  * POST /api/watchlist
  *
- * Adds a show to the user's Trakt watchlist.
- * Body: { showId: number } — Trakt show id.
+ * Adds a show to the user's plan-to-watch list.
+ * Body: { showId: number } — Simkl show id.
  */
 export async function POST(req: Request) {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (!encoded) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ error: "Invalid token data" }, { status: 401 });
-  }
-
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ user: null }, { status: 401 });
-    }
-  }
+  const session = await getSession();
+  if (!session.ok) return session.response;
+  const { tokens } = session;
 
   try {
     const { showId } = await req.json();
@@ -322,17 +201,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "showId is required" }, { status: 400 });
     }
 
-    const res = await fetchTrakt(`${TRAKT_API_BASE}/sync/watchlist`, {
+    const res = await fetchSimkl(apiUrl("/sync/add-to-list"), {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": USER_AGENT,
-        "trakt-api-key": process.env.TRAKT_CLIENT_ID!,
-        "trakt-api-version": "2",
-        Authorization: `Bearer ${tokens.access_token}`,
-      },
+      headers: authHeaders(tokens.access_token),
+      // `to` is per-item: a top-level `to` is rejected with 400 empty_field.
       body: JSON.stringify({
-        shows: [{ ids: { trakt: showId } }],
+        shows: [{ to: "plantowatch", ids: { simkl: showId } }],
       }),
     });
 

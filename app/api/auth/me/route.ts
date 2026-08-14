@@ -1,66 +1,38 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import {
-  decodeTokens,
-  isTokenExpired,
-  refreshAccessToken,
-  encodeTokens,
-  fetchUserSettings,
-  COOKIE_NAME,
-} from "@/lib/trakt";
+import { fetchUserSettings, SimklApiError } from "@/lib/simkl";
+import { getSession, clearSession } from "@/lib/session";
 
 /**
  * GET /api/auth/me
  *
  * Returns the current authenticated user's profile.
- * Auto-refreshes tokens if expired.
+ *
+ * There is no token-refresh branch: Simkl tokens last 5 years and have no
+ * refresh grant. A 401 means the user revoked the app from their Simkl
+ * Connected Apps settings, so the cookie is cleared and they re-authorize.
  */
 export async function GET() {
-  const cookieStore = await cookies();
-  const encoded = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (!encoded) {
+  const session = await getSession();
+  if (!session.ok) {
     return NextResponse.json({ user: null }, { status: 401 });
-  }
-
-  let tokens = decodeTokens(encoded);
-  if (!tokens) {
-    cookieStore.delete(COOKIE_NAME);
-    return NextResponse.json({ user: null }, { status: 401 });
-  }
-
-  // Auto-refresh if expired
-  if (isTokenExpired(tokens)) {
-    try {
-      tokens = await refreshAccessToken(tokens.refresh_token);
-      cookieStore.set(COOKIE_NAME, encodeTokens(tokens), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 90 * 24 * 60 * 60,
-        path: "/",
-      });
-    } catch {
-      cookieStore.delete(COOKIE_NAME);
-      return NextResponse.json({ user: null }, { status: 401 });
-    }
   }
 
   try {
-    const settings = await fetchUserSettings(tokens.access_token);
+    const settings = await fetchUserSettings(session.tokens.access_token);
     return NextResponse.json({
       user: {
-        username: settings.user.username,
+        username: settings.user.ids?.slug ?? String(settings.user.ids?.simkl),
         name: settings.user.name,
-        avatar: settings.user.images?.avatar?.full ?? null,
-        vip: settings.user.vip,
+        avatar: settings.user.avatar ?? null,
+        vip: settings.account?.type === "vip",
       },
     });
   } catch (error) {
+    if (error instanceof SimklApiError && error.status === 401) {
+      await clearSession();
+      return NextResponse.json({ user: null }, { status: 401 });
+    }
     console.error("Failed to fetch user:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch user" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch user" }, { status: 500 });
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Shared types for the TraktApp.
+ * Shared types for the app.
  *
  * TrackedShow is the enriched data structure that combines:
  *   - Watchlist metadata (when it was added)
@@ -9,137 +9,134 @@
  */
 
 // ---------------------------------------------------------------------------
-// Raw Trakt API shapes (partial — only fields we use)
+// Raw Simkl API shapes (partial — only fields we use)
 // ---------------------------------------------------------------------------
 
-export interface TraktShowIds {
-  trakt: number;
-  slug: string;
-  tvdb: number | null;
-  imdb: string | null;
-  tmdb: number | null;
+export interface SimklShowIds {
+  simkl: number;
+  slug?: string;
+  /** Simkl returns external ids as strings, not numbers. */
+  tvdb?: string | null;
+  imdb?: string | null;
+  tmdb?: string | null;
 }
 
-export interface TraktShow {
+export interface SimklShow {
   title: string;
   year: number | null;
-  ids: TraktShowIds;
+  ids: SimklShowIds;
+  /** Bare poster path like "16/16913426086fc13" — see posterUrl(). */
+  poster?: string | null;
   overview?: string;
-  status?: string; // "returning series" | "ended" | "canceled" | "in production" | "planned"
+  /** "ended" | "returning series" | "canceled" | "tba" — from GET /tv/{id}. */
+  status?: string;
   network?: string;
   runtime?: number;
   rating?: number;
   votes?: number;
   genres?: string[];
-  aired_episodes?: number;
+  total_episodes?: number;
   first_aired?: string;
   country?: string;
   trailer?: string | null;
   certification?: string;
-  images?: TraktImages;
 }
 
-export interface TraktImages {
-  poster?: string[];
-  fanart?: string[];
-  banner?: string[];
-  thumb?: string[];
-  logo?: string[];
-  clearart?: string[];
-}
-
-export interface TraktEpisode {
+export interface SimklEpisode {
   season: number;
-  number: number;
+  episode: number;
   title: string;
-  ids: {
-    trakt: number;
-    tvdb: number | null;
-    imdb: string | null;
-    tmdb: number | null;
-  };
-  overview?: string;
-  first_aired?: string | null;
+  ids?: { simkl?: number; tvdb?: string | null; imdb?: string | null };
+  description?: string;
+  /** ISO date, Simkl's `date` field on episode records. */
+  date?: string | null;
   runtime?: number;
   rating?: number;
 }
 
-export interface TraktSeasonProgress {
-  number: number;
-  title?: string;
-  aired: number;
-  completed: number;
-  episodes: {
+/**
+ * One entry from GET /sync/all-items/{type}/{status}.
+ *
+ * `status` here is the *user's list status*, not the show's airing status —
+ * the show's airing status only comes from GET /tv/{id}.
+ */
+export interface SimklListItem {
+  added_to_watchlist_at: string;
+  last_watched_at: string | null;
+  user_rating: number | null;
+  status: SimklListStatus;
+  /** Compact episode code, e.g. "S01E01". Null when nothing watched yet. */
+  last_watched: string | null;
+  /** Compact episode code for the next unwatched episode. */
+  next_to_watch: string | null;
+  /** Present when next_watch_info=yes and the item is in `watching`. */
+  next_to_watch_info?: {
+    title: string;
+    season: number;
+    episode: number;
+    date: string | null;
+  } | null;
+  watched_episodes_count: number;
+  total_episodes_count: number;
+  not_aired_episodes_count: number;
+  show: SimklShow;
+  /** Present when extended=full — per-season watched episode records. */
+  seasons?: {
     number: number;
-    completed: boolean;
-    last_watched_at: string | null;
+    episodes: { number: number; watched_at?: string }[];
   }[];
 }
 
-export interface TraktWatchedProgress {
-  aired: number;
-  completed: number;
-  last_watched_at: string | null;
-  reset_at: string | null;
-  seasons: TraktSeasonProgress[];
-  next_episode: TraktEpisode | null;
-  last_episode: TraktEpisode | null;
-}
+export type SimklListStatus =
+  | "watching"
+  | "plantowatch"
+  | "hold"
+  | "completed"
+  | "dropped";
 
-export interface TraktWatchlistItem {
-  listed_at: string;
-  type: string;
-  show: TraktShow;
+/** Top-level shape of GET /sync/all-items — keys appear only when non-empty. */
+export interface SimklAllItemsResponse {
+  shows?: SimklListItem[];
+  anime?: SimklListItem[];
+  movies?: SimklListItem[];
 }
 
 // ---------------------------------------------------------------------------
 // Movie shapes (for "Upcoming on Streaming")
 // ---------------------------------------------------------------------------
 
-export interface TraktMovieIds {
-  trakt: number;
-  slug: string;
-  imdb: string | null;
-  tmdb: number | null;
+export interface SimklMovieIds {
+  simkl: number;
+  slug?: string;
+  imdb?: string | null;
+  tmdb?: string | null;
 }
 
-export interface TraktMovie {
+export interface SimklMovie {
   title: string;
   year: number | null;
-  ids: TraktMovieIds;
+  ids: SimklMovieIds;
+  poster?: string | null;
   overview?: string;
   runtime?: number;
   rating?: number;
   votes?: number;
   genres?: string[];
   certification?: string;
-  images?: TraktImages;
-}
-
-/** One entry from GET /movies/{id}/releases/{country}. */
-export interface TraktMovieRelease {
-  country: string;
-  certification: string | null;
-  release_date: string; // YYYY-MM-DD
-  release_type:
-    | "unknown"
-    | "premiere"
-    | "limited"
-    | "theatrical"
-    | "digital"
-    | "physical"
-    | "tv";
-  note: string | null;
+  /** ISO date of general release, from GET /movies/{id}. */
+  released?: string | null;
 }
 
 /**
- * A movie paired with the soonest upcoming release entry that looks like a
- * "now streaming with a subscription" window (release_type digital|tv, note
- * present, date in the future). Best-effort heuristic — see lib/movies.ts.
+ * A movie paired with an upcoming release date.
+ *
+ * Simkl has no direct equivalent of Trakt's per-country release-type feed, so
+ * this is now sourced from the CDN movie calendar rather than a release-type
+ * heuristic — see lib/movies.ts.
  */
 export interface UpcomingStreamingRelease {
-  movie: TraktMovie;
-  release: TraktMovieRelease;
+  movie: SimklMovie;
+  releaseDate: string; // YYYY-MM-DD
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +171,17 @@ export interface SeasonSummary {
 }
 
 export interface NextEpisodeInfo {
+  /**
+   * Synthetic stable id — `showId * 100000 + season * 1000 + episode`.
+   *
+   * Simkl's write endpoints address episodes by (show id, season, episode)
+   * rather than by an episode id, so this exists purely as a React key and as
+   * a lookup key for the dashboard's optimistic-update maps. Never send it to
+   * the API; send showId/season/episode instead.
+   */
   id: number;
+  /** Simkl show id — needed to address this episode on write endpoints. */
+  showId: number;
   season: number;
   episode: number;
   title: string;
@@ -191,7 +198,7 @@ export interface TrackedShow {
   listedAt: string;
 
   // --- Show metadata ---
-  show: TraktShow;
+  show: SimklShow;
 
   // --- Progress ---
   progress: {
@@ -219,7 +226,7 @@ export interface TrackedShow {
     /** The next episode the user should watch (could be aired or unaired) */
     nextEpisode: NextEpisodeInfo | null;
 
-    /** The show's next globally upcoming episode (from /shows/{id}/next_episode) */
+    /** The show's next globally upcoming episode */
     upcomingEpisode: NextEpisodeInfo | null;
 
     /** Currently-airing season info: the most recent season where more
