@@ -20,7 +20,7 @@ const SIMKL_AUTH_BASE = "https://simkl.com";
  * (public and authenticated alike), plus a descriptive User-Agent. These
  * identify the app for debugging and outage routing.
  */
-const APP_NAME = "traktapp";
+const APP_NAME = "simklapp";
 const APP_VERSION = "1.0";
 const USER_AGENT = `${APP_NAME}/${APP_VERSION}`;
 

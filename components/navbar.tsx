@@ -15,7 +15,7 @@ export function Navbar() {
     <nav className="navbar" id="navbar">
       <Link href={isAuthenticated ? "/dashboard" : "/"} className="navbar-brand">
         <span className="navbar-brand-icon">📺</span>
-        TraktApp
+        SimklApp
       </Link>
 
       <div className="navbar-actions">

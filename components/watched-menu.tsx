@@ -44,13 +44,13 @@ export function WatchedMenu({
     pending?.kind === "show"
       ? {
           title: "Mark entire show watched?",
-          message: `Every aired episode of "${showTitle}" will be marked watched on Trakt. This cannot be easily undone.`,
+          message: `Every aired episode of "${showTitle}" will be marked watched on Simkl. This cannot be easily undone.`,
           confirmLabel: "Mark all watched",
         }
       : pending?.kind === "season" && seasonNumber !== null
         ? {
             title: `Mark season ${seasonNumber} watched?`,
-            message: `All aired episodes of "${showTitle}" season ${seasonNumber} will be marked watched on Trakt.`,
+            message: `All aired episodes of "${showTitle}" season ${seasonNumber} will be marked watched on Simkl.`,
             confirmLabel: `Mark season ${seasonNumber} watched`,
           }
         : null;

@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const MODEL = "gemini-3.1-flash-lite";
+const MODEL = "gemini-3.5-flash-lite";
 
 // Raised when Gemini returns 429 RESOURCE_EXHAUSTED. Carries the retry delay
 // (ms) parsed from the API's RetryInfo so callers can surface it to the user.

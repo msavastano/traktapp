@@ -24,7 +24,7 @@ export function LoginButton() {
       ) : (
         <span className="login-button-icon">▶</span>
       )}
-      {loading ? "Redirecting…" : "Sign in with Trakt"}
+      {loading ? "Redirecting…" : "Sign in with Simkl"}
     </button>
   );
 }

@@ -55,7 +55,7 @@ export function UpcomingStreaming() {
         <div className="coming-soon-icon">🎬</div>
         <h3 className="coming-soon-title">Nothing detected right now</h3>
         <p className="coming-soon-desc">
-          We look for movies with an announced streaming window in Trakt&apos;s
+          We look for movies with an announced streaming window in Simkl&apos;s
           release data — coverage depends on what&apos;s been logged there, so
           this list can be short or empty. Check back later.
         </p>

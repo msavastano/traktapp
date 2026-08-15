@@ -66,7 +66,7 @@ function DashboardInner() {
   const [shows, setShows] = useState<TrackedShow[]>([]);
   const [, setPagination] = useState<WatchlistResponse["pagination"] | null>(null);
   const [watchlistLoading, setWatchlistLoading] = useState(true);
-  // Keyed by trakt show id so it survives sort/filter changes.
+  // Keyed by simkl show id so it survives sort/filter changes.
   const [showRaw, setShowRaw] = useState<number | null>(null);
   const [markingIds, setMarkingIds] = useState<Record<number, boolean>>({});
   const [bulkMarking, setBulkMarking] = useState<Record<number, boolean>>({});
@@ -322,7 +322,7 @@ function DashboardInner() {
     return d.getTime() <= Date.now();
   };
   // Ephemeral skip map — survives refetches within a session but not page reload.
-  // Trakt has no native skip concept, so skips are client-only.
+  // Simkl has no native skip concept, so skips are client-only.
   // Maps: skipped episode id -> the next episode we advanced the user to.
   // Used to re-apply skips after a server refetch (chain via repeated lookup).
   const skippedEpisodeMapRef = useRef<Map<number, NextEpisodeInfo | null>>(
@@ -663,7 +663,7 @@ function DashboardInner() {
     } finally {
       setMarkingIds((prev) => ({ ...prev, [episode.id]: false }));
       await refreshSkipChainAfterWatch(slug, episode);
-      // Reconcile in background — Trakt's /sync/watched has a few seconds of
+      // Reconcile in background — Simkl's /sync/all-items has a few seconds of
       // propagation delay, so the optimistic state stays visible meanwhile.
       fetchWatchlist(true);
     }
@@ -839,7 +839,7 @@ function DashboardInner() {
 
   // Air date of the next unwatched episode (past or future).
   // Falls back to the globally-upcoming episode for caught-up shows where
-  // Trakt's progress.next_episode is null but a future ep is scheduled.
+  // Simkl's progress.nextEpisode is null but a future ep is scheduled.
   // For shows that haven't aired yet (no episode air date known), falls back
   // to the show's first_aired premiere date when it's in the future.
   // Returns null if no air date is known (e.g. all episodes watched).
@@ -1315,7 +1315,7 @@ function DashboardInner() {
               <div className="coming-soon-icon">📭</div>
               <h3 className="coming-soon-title">Watchlist is empty</h3>
               <p className="coming-soon-desc">
-                Add shows to your watchlist on Trakt to see them here.
+                Add shows to your watchlist on Simkl to see them here.
               </p>
             </div>
           ) : displayedShows.length === 0 ? (

@@ -44,13 +44,13 @@ export function UnwatchMenu({
     pending?.kind === "episode"
       ? {
           title: "Unwatch this episode?",
-          message: `${episodeLabel} of "${showTitle}" will be removed from your Trakt history.`,
+          message: `${episodeLabel} of "${showTitle}" will be removed from your Simkl history.`,
           confirmLabel: "Unwatch episode",
         }
       : pending?.kind === "season" && episodeSeason !== null
         ? {
             title: `Unwatch season ${episodeSeason}?`,
-            message: `All watched episodes of "${showTitle}" season ${episodeSeason} will be removed from your Trakt history.`,
+            message: `All watched episodes of "${showTitle}" season ${episodeSeason} will be removed from your Simkl history.`,
             confirmLabel: `Unwatch season ${episodeSeason}`,
           }
         : null;

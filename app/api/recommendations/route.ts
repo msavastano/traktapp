@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 
     const recs = await generateRecommendations(geminiKey, taste, 12);
 
-    // Enrich each rec with Trakt show data (poster, ids, etc.)
+    // Enrich each rec with Simkl show data (poster, ids, etc.)
     const excludedTitles = new Set(taste.map((t) => t.title.toLowerCase()));
     const enriched: RecommendationCard[] = await Promise.all(
       recs.map(async (rec) => {

@@ -281,7 +281,7 @@ export default function RecommendationsPage() {
                           </button>
                         ) : (
                           <span className="watchlist-meta-item">
-                            (no Trakt match)
+                            (no Simkl match)
                           </span>
                         )}
                       </div>

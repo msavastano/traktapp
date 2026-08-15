@@ -20,10 +20,10 @@ let cached: { value: UpcomingStreamingPayload; expiresAt: number } | null = null
 /**
  * GET /api/upcoming-streaming
  *
- * Global, non-personalized: movies from Trakt's trending+popular pool that
- * have an upcoming digital/tv release with a service name in `note` (best
- * effort — see lib/movies.ts). No auth required — the underlying Trakt
- * endpoints are public and the result isn't user-specific.
+ * Global, non-personalized: movies from Simkl's CDN movie-release calendar
+ * with an upcoming release date (best effort — see lib/movies.ts). No auth
+ * required — the underlying Simkl endpoints are public and the result isn't
+ * user-specific.
  */
 export async function GET(req: NextRequest) {
   const country = req.nextUrl.searchParams.get("country") || "us";

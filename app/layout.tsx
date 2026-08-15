@@ -4,9 +4,9 @@ import { Navbar } from "@/components/navbar";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TraktApp — Track Your TV Shows",
+  title: "SimklApp — Track Your TV Shows",
   description:
-    "Track the TV shows you watch, discover new favorites, and manage your viewing history — powered by the Trakt API.",
+    "Track the TV shows you watch, discover new favorites, and manage your viewing history — powered by the Simkl API.",
 };
 
 export default function RootLayout({
