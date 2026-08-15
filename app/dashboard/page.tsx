@@ -1343,11 +1343,12 @@ function DashboardInner() {
                         !progress.nextEpisode.isAired
                     )
                   : false;
+                // Simkl's status vocabulary is 'ended' / 'airing' — it has no
+                // "returning series" / "in production" values to allowlist, so
+                // eligibility is a denylist, matching computeTrackingStatus.
                 const statusLower = show.status?.toLowerCase();
                 const newsEligibleStatus =
-                  statusLower === "returning series" ||
-                  statusLower === "in production" ||
-                  statusLower === "planned";
+                  statusLower !== "ended" && statusLower !== "canceled";
                 const showNewsButton = isEnriched && newsEligibleStatus && !hasKnownAirDate;
 
                 let displayStatusLabel = statusLabel;

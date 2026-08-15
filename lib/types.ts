@@ -28,7 +28,11 @@ export interface SimklShow {
   /** Bare poster path like "16/16913426086fc13" — see posterUrl(). */
   poster?: string | null;
   overview?: string;
-  /** "ended" | "returning series" | "canceled" | "tba" — from GET /tv/{id}. */
+  /**
+   * From GET /tv/{id}. Observed values are `"ended"` and `"airing"` only —
+   * Simkl has no "returning series" / "in production" value. Treat anything
+   * that isn't `"ended"`/`"canceled"` as still running.
+   */
   status?: string;
   network?: string;
   runtime?: number;
