@@ -13,11 +13,20 @@ const SIMKL_IMG_BASE = "https://wsrv.nl/?url=https://simkl.in";
 
 export const POSTER_PLACEHOLDER = `${SIMKL_IMG_BASE}/poster_no_pic_c.png`;
 
-export type PosterSize = "_w" | "_c" | "_m";
+/**
+ * Poster size suffixes. Only `_ca` and `_m` are portrait — `_w` is a
+ * landscape crop and will look zoomed-in inside a portrait card frame.
+ *
+ *   _m  — 340 × 500, portrait          ← default; retina-sharp in 120px frames
+ *   _ca — 190 × 279, card aspect (~2:3)
+ *   _c  — cover
+ *   _w  — 600 × 338, landscape, cropped
+ */
+export type PosterSize = "_ca" | "_m" | "_c" | "_w";
 
 export function posterUrl(
   path: string | null | undefined,
-  size: PosterSize = "_w"
+  size: PosterSize = "_m"
 ): string {
   if (!path) return POSTER_PLACEHOLDER;
   return `${SIMKL_IMG_BASE}/posters/${path}${size}.webp&q=90`;
@@ -29,7 +38,7 @@ export function posterUrl(
  */
 export function posterFrom(
   entity: { poster?: string | null } | null | undefined,
-  size: PosterSize = "_w"
+  size: PosterSize = "_m"
 ): string | null {
   if (!entity?.poster) return null;
   return posterUrl(entity.poster, size);
