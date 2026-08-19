@@ -1004,7 +1004,7 @@ function DashboardInner() {
             className={`tab-btn ${activeTab === "streaming" ? "active" : ""}`}
             onClick={() => setActiveTab("streaming")}
           >
-            Streaming Soon
+            New on Streaming
           </button>
         </div>
 
@@ -1065,7 +1065,7 @@ function DashboardInner() {
 
         <section className="watchlist-section">
           <h2 className="section-title">
-            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "upcoming" ? "Coming Soon" : activeTab === "calendar" ? "Calendar" : activeTab === "streaming" ? "Upcoming on Streaming" : "Discover"}
+            {activeTab === "tracking" ? "Up Next" : activeTab === "watchlist" ? "Plan to Watch" : activeTab === "upcoming" ? "Coming Soon" : activeTab === "calendar" ? "Calendar" : activeTab === "streaming" ? "New on Streaming" : "Discover"}
           </h2>
 
           {activeTab === "discover" ? (

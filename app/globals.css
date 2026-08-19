@@ -2199,3 +2199,65 @@ select {
   font-size: 0.8rem;
   opacity: 0.65;
 }
+
+/* ---------------------------------------------------------------------------
+   New on Streaming tab
+   --------------------------------------------------------------------------- */
+
+/* Sets expectations up front: this feed is "streaming now", not "arriving
+   soon". No provider publishes future streaming dates — see lib/movies.ts. */
+.streaming-caveat {
+  margin: 0 0 var(--space-4, 1rem);
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.service-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+}
+
+/* Neutral pill with a brand-coloured accent edge. A fully brand-coloured
+   badge would fight the app's muted warm palette and needs a separate
+   readable pairing per theme; the accent gives the same at-a-glance
+   distinction while the label text carries the actual name. */
+.service-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px var(--space-3, 12px);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-radius: var(--radius-full, 999px);
+  white-space: nowrap;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--service-accent, var(--muted));
+}
+
+.service-netflix   { --service-accent: #e50914; }
+.service-disney    { --service-accent: #1f6feb; }
+.service-paramount { --service-accent: #0064ff; }
+.service-prime     { --service-accent: #00a8e1; }
+.service-appletv   { --service-accent: #7d7d7d; }
+.service-peacock   { --service-accent: #ff8000; }
+.service-hbomax    { --service-accent: #7b2ff7; }
+.service-amc       { --service-accent: #d4a017; }
+
+/* TMDB's terms require crediting JustWatch as the source of the availability
+   data. Do not remove — see components/upcoming-streaming.tsx. */
+.data-attribution {
+  margin: var(--space-4, 1rem) 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.data-attribution a {
+  color: inherit;
+  text-decoration: underline;
+}

@@ -122,12 +122,49 @@ and `npm run build` succeeds. What's left:
    path (it only triggers once the activities timestamp moves).
 2. **Add the Simkl link-backs and trending attribution** required by their API
    rules (see above). Helpers exist in `lib/images.ts`; no UI uses them yet.
+   The "New on Streaming" tab carries a *separate*, already-satisfied
+   attribution duty: TMDB requires crediting JustWatch as the source of
+   availability data, rendered at the foot of
+   `components/upcoming-streaming.tsx`. Removing it is grounds for TMDB
+   revoking API access.
 3. **Update `CLAUDE.md`**, which still documents the Trakt architecture
    throughout — only a pointer to this file was added.
 4. Two pre-existing lint errors in `app/dashboard/page.tsx` (lines ~320 and
    ~825) are unrelated to this migration and were failing before it.
 5. `.env.local` has a stray `SIMKL_CLIENT_ID / SIMKL_CLIENT_SECRET` line with
    no `=` — a paste artifact, safe to delete.
+
+## "New on Streaming" is TMDB, not Simkl
+
+Simkl publishes **no streaming-provider data for movies**. Verified against the
+live API, not just the docs:
+
+| Checked | Result |
+|---|---|
+| `/calendar/v2/movie_release.json` | entries are `{simkl_id, date, finale_type}`; none of the 19 metadata fields names a service or release type (`status` is only ever `soon` / `premiere`) |
+| `GET /movies/{id}` | returns `release_dates[].results[].type` where `4` = digital, but results carry only `{type, release_date}` — no provider `note` (TMDB has one, Simkl drops it), verified over 30 sampled titles / 95 results. "Digital" also conflates pay-per-view rental with subscription |
+| `network` path filter | exists on `/tv/genres/…` and `/anime/genres/…` only (`hbo`, `netflix`, `apple-tv`, `prime-video`). `/movies/genres/{genre}/{type}/{country}/{year}/{sort}` has no such segment |
+| `/search/random?service=` | only `netflix`, `crunchy`, `hulu`, and returns an undated random pick |
+
+So that tab is TMDB end-to-end (`lib/tmdb.ts` → `lib/movies.ts`), whose
+provider data is licensed from JustWatch and splits `flatrate`/`free`/`ads`
+from `rent`/`buy` — exactly the subscription-vs-pay-per-view line the feature
+needs. Posters come from `image.tmdb.org` (allow-listed in `next.config.ts`)
+rather than Simkl's proxy.
+
+**It shows "streaming now", not "arriving soon".** No provider — TMDB,
+JustWatch, or Simkl — publishes future streaming dates, and JustWatch ships
+TMDB a single daily export. The tab is worded accordingly. Making it genuinely
+forward-looking would need either nightly snapshot diffing (the Redis in
+`lib/sync-store.ts` would serve) or a vendor with announced-window data such as
+Watchmode.
+
+Provider ids are resolved by *name* at runtime from
+`/watch/providers/movie?watch_region=US` rather than hardcoded, because TMDB
+renames services and changes their ids ("HBO Max" → "Max" → "HBO Max"). The
+matchers in `STREAMING_SERVICES` are anchored to avoid two specific traps:
+"Amazon Video" (transactional) vs "Amazon Prime Video", and "Apple TV"
+(transactional) vs "Apple TV+".
 
 ## Environment
 
@@ -139,6 +176,7 @@ and `npm run build` succeeds. What's left:
 | `TOKEN_ENCRYPTION_KEY` | Unchanged, still valid. 64 hex chars. |
 | `REDIS_URL` | Added by the Vercel Redis integration (Production, Preview, Development). TCP `redis://` connection string. |
 | `GEMINI_API_KEY` | Unchanged. |
+| `TMDB_API_KEY` | **New.** Free, self-serve from <https://www.themoviedb.org/settings/api>. Powers the "New on Streaming" tab only — the rest of the app is unaffected if it is missing (that one route 500s). Server-only: no `NEXT_PUBLIC_` prefix, so it stays out of the client bundle. Must be added to `.env.local` and to Vercel. |
 
 `.env.local.bak` holds the pre-migration file. Note `.env.local` contains a
 stray line `SIMKL_CLIENT_ID / SIMKL_CLIENT_SECRET` with no `=` — a paste

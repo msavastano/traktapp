@@ -1,5 +1,5 @@
 /**
- * Simkl image helpers.
+ * Image and deep-link helpers for Simkl and TMDB.
  *
  * Kept separate from lib/simkl.ts so client components can import them —
  * that module pulls in node:crypto for cookie encryption and can't be
@@ -59,4 +59,32 @@ export function simklMovieUrl(simklId: number, slug?: string | null): string {
   return slug
     ? `https://simkl.com/movies/${simklId}/${slug}`
     : `https://simkl.com/movies/${simklId}`;
+}
+
+// ---------------------------------------------------------------------------
+// TMDB
+// ---------------------------------------------------------------------------
+
+/**
+ * The "New on Streaming" tab is TMDB end-to-end — Simkl publishes no
+ * streaming-provider data for movies — so its artwork comes from TMDB's CDN
+ * rather than Simkl's wsrv.nl proxy. `image.tmdb.org` is allow-listed in
+ * next.config.ts for this.
+ *
+ * These live here, not in lib/tmdb.ts, because that module reads
+ * TMDB_API_KEY and must stay off the client bundle.
+ */
+export type TmdbPosterSize = "w185" | "w342" | "w500";
+
+/** `w342` is the smallest size that still looks sharp in a 120px card frame. */
+export function tmdbPosterUrl(
+  path: string | null | undefined,
+  size: TmdbPosterSize = "w342"
+): string | null {
+  if (!path) return null;
+  return `https://image.tmdb.org/t/p/${size}${path}`;
+}
+
+export function tmdbMovieUrl(tmdbId: number): string {
+  return `https://www.themoviedb.org/movie/${tmdbId}`;
 }

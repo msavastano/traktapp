@@ -132,15 +132,38 @@ export interface SimklMovie {
 }
 
 /**
- * A movie paired with an upcoming release date.
+ * A movie currently streaming on one of the tracked subscription services.
  *
- * Simkl has no direct equivalent of Trakt's per-country release-type feed, so
- * this is now sourced from the CDN movie calendar rather than a release-type
- * heuristic — see lib/movies.ts.
+ * Sourced from TMDB, not Simkl: Simkl exposes no streaming provider for
+ * movies anywhere in its API (see the header of lib/tmdb.ts for what was
+ * checked). TMDB's provider data is licensed from JustWatch and must be
+ * credited as such wherever it is displayed.
+ *
+ * `releaseDate` is the movie's release date, *not* the date it landed on the
+ * service — no API publishes the latter. See lib/movies.ts.
  */
-export interface UpcomingStreamingRelease {
-  movie: SimklMovie;
+export interface StreamingRelease {
+  movie: StreamingMovie;
   releaseDate: string; // YYYY-MM-DD
+  /** Service keys from STREAMING_SERVICES, e.g. ["netflix", "hbomax"]. */
+  serviceKeys: string[];
+  /** TMDB's JustWatch-backed watch page for this title. */
+  watchLink: string | null;
+}
+
+/**
+ * A movie as it arrives from TMDB. Distinct from `SimklMovie` because this
+ * feed never touches Simkl — ids, posters and ratings are all TMDB's.
+ */
+export interface StreamingMovie {
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  /** TMDB poster path, e.g. "/abc123.jpg". Render via tmdbPosterUrl(). */
+  posterPath: string | null;
+  overview?: string;
+  rating?: number;
+  votes?: number;
 }
 
 // ---------------------------------------------------------------------------

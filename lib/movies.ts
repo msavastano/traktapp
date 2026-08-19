@@ -1,104 +1,176 @@
 /**
- * Upcoming movie releases, from Simkl's CDN movie-release calendar.
+ * "New on Streaming" — movies now watchable on a subscription tier of
+ * Netflix, Disney+, Paramount+, Prime Video, Apple TV+, Peacock, HBO Max or
+ * AMC+, excluding anything that is only available to rent or buy.
  *
- * ⚠️ Behaviour change from the Trakt implementation.
+ * ⚠️ This does not come from Simkl, and it can't. Checked against the live
+ * Simkl API before switching:
  *
- * Trakt exposed per-country release *types* (`digital`, `tv`, `theatrical`, …)
- * with a `note` field that often named the streaming service, so the old code
- * could heuristically answer "what's about to hit streaming?".
+ *   - the CDN movie calendar entries are `{simkl_id, date, finale_type}`,
+ *     and none of the 19 metadata fields names a service or a release type
+ *   - `GET /movies/{id}` does return `release_dates[].results[].type`, where
+ *     `4` means "digital" — but the results carry only `{type, release_date}`,
+ *     with no provider `note` (TMDB has one; Simkl drops it). "Digital" also
+ *     lumps pay-per-view rental in with subscription, which is precisely the
+ *     line this feature has to draw
+ *   - the `network` filter exists only at `/tv/genres/…` and `/anime/genres/…`;
+ *     `/movies/genres/{genre}/{type}/{country}/{year}/{sort}` has no such
+ *     segment
+ *   - `/search/random?service=` supports only netflix, hulu and crunchy, and
+ *     returns an undated random pick
  *
- * Simkl's calendar carries no release-type breakdown — an entry is just
- * `{simkl_id, date}` joined to show metadata. So this now answers the weaker
- * question "what's releasing soon?", and the UI wording should match. The
- * metadata does include a `dvd_date`, but that is a physical-release date and
- * is not a reliable streaming signal.
+ * ⚠️ **This is "recently landed", not "arriving soon".** TMDB (via JustWatch)
+ * publishes a snapshot of *current* availability with no future-dated field
+ * anywhere, so "arrives on Netflix on the 3rd" is not answerable from this
+ * data at all. What the feed actually shows is recent movies that are on one
+ * of those services *today*, newest release first. The tab wording has to
+ * match that or it lies to the user.
  */
 
-import type { SimklMovie, UpcomingStreamingRelease } from "./types";
-import { fetchSimkl, cdnUrl, baseHeaders } from "./simkl";
+import type { StreamingMovie, StreamingRelease } from "./types";
+import {
+  DEFAULT_REGION,
+  discoverStreamingMovies,
+  fetchTitleAvailability,
+  resolveProviders,
+  type ResolvedProvider,
+} from "./tmdb";
 
-interface MovieFeedEntry {
-  simkl_id: number;
-  date: string;
+/**
+ * How far back to look. A theatrical title typically reaches a subscription
+ * tier several months after release and sorts by its *theatrical* date, so a
+ * short window would show streaming originals only and miss everything else.
+ */
+const DEFAULT_LOOKBACK_DAYS = 150;
+
+function toDateString(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
-interface MovieFeedMeta {
+function toMovie(m: {
+  id: number;
   title: string;
-  poster?: string;
-  ids?: { simkl_id?: number; slug?: string; imdb?: string; tmdb?: string };
+  overview?: string;
+  poster_path?: string | null;
   release_date?: string;
-  runtime?: string | number;
-  genres?: string[];
-  ratings?: { simkl?: { rating?: number; votes?: number } };
-}
-
-interface MovieFeed {
-  calendar: MovieFeedEntry[];
-  metadata: Record<string, MovieFeedMeta>;
-}
-
-/** Simkl reports runtime as either a number or a string like "28m". */
-function parseRuntime(value: string | number | undefined): number | undefined {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const m = /(\d+)/.exec(value);
-    if (m) return Number(m[1]);
-  }
-  return undefined;
-}
-
-function toMovie(simklId: number, meta: MovieFeedMeta | undefined): SimklMovie {
+  vote_average?: number;
+  vote_count?: number;
+}): StreamingMovie {
   return {
-    title: meta?.title ?? "",
-    year: meta?.release_date
-      ? new Date(meta.release_date).getUTCFullYear()
-      : null,
-    ids: {
-      simkl: simklId,
-      slug: meta?.ids?.slug,
-      imdb: meta?.ids?.imdb ?? null,
-      tmdb: meta?.ids?.tmdb ?? null,
-    },
-    poster: meta?.poster ?? null,
-    runtime: parseRuntime(meta?.runtime),
-    genres: meta?.genres,
-    rating: meta?.ratings?.simkl?.rating,
-    votes: meta?.ratings?.simkl?.votes,
-    released: meta?.release_date ?? null,
+    tmdbId: m.id,
+    title: m.title,
+    year: m.release_date ? Number(m.release_date.slice(0, 4)) || null : null,
+    posterPath: m.poster_path ?? null,
+    overview: m.overview || undefined,
+    // TMDB returns 0 for "unrated", which would render as a misleading ⭐ 0.0.
+    rating: m.vote_average && m.vote_average > 0 ? m.vote_average : undefined,
+    votes: m.vote_count || undefined,
   };
 }
 
-/**
- * Movies releasing from today onward, soonest first.
- *
- * The feed is a rolling ~33-day window and is identical for every user, so
- * the caller is expected to cache the result rather than this refetching.
- */
-export async function fetchUpcomingMovieReleases(
-  limit = 40
-): Promise<UpcomingStreamingRelease[]> {
-  const res = await fetchSimkl(cdnUrl("/calendar/v2/movie_release.json"), {
-    headers: baseHeaders(),
-  });
+/** A discover hit, before its per-service availability is known. */
+interface Candidate {
+  movie: StreamingMovie;
+  releaseDate: string;
+}
 
-  if (!res.ok) {
-    throw new Error(`Failed to fetch movie release calendar (${res.status})`);
+/**
+ * Resolves which services carry each title, in small batches.
+ *
+ * `discover` only reports that a title matched *some* provider in the OR
+ * list, never which — so the badges need one extra call per title. Batched at
+ * 8 to stay polite; TMDB has no published per-second cap but this runs behind
+ * a 6h cache either way. A title whose lookup fails is dropped rather than
+ * shown with no badges, since an unlabelled card can't be acted on.
+ */
+async function attachAvailability(
+  candidates: Candidate[],
+  providers: ResolvedProvider[],
+  region: string,
+  concurrency = 8
+): Promise<StreamingRelease[]> {
+  const out: StreamingRelease[] = [];
+
+  for (let i = 0; i < candidates.length; i += concurrency) {
+    const batch = candidates.slice(i, i + concurrency);
+    const settled = await Promise.allSettled(
+      batch.map(async ({ movie, releaseDate }) => {
+        const availability = await fetchTitleAvailability(
+          movie.tmdbId,
+          providers,
+          region
+        );
+        return { movie, releaseDate, availability };
+      })
+    );
+
+    for (const r of settled) {
+      if (r.status === "rejected") {
+        console.error("TMDB availability lookup failed:", r.reason);
+        continue;
+      }
+      const { movie, releaseDate, availability } = r.value;
+      if (availability.serviceKeys.length === 0) continue;
+      out.push({
+        movie,
+        releaseDate,
+        serviceKeys: availability.serviceKeys,
+        watchLink: availability.link,
+      });
+    }
   }
 
-  const feed: MovieFeed = await res.json();
-  if (!feed?.calendar) return [];
+  return out;
+}
 
-  // Compare against the start of today so a release earlier today still shows.
-  const startOfToday = new Date();
-  startOfToday.setUTCHours(0, 0, 0, 0);
+/**
+ * Movies on a tracked subscription service, newest release first.
+ *
+ * The result is identical for every user in a region, so the caller is
+ * expected to cache it rather than this refetching.
+ */
+export async function fetchNewOnStreaming(
+  limit = 40,
+  region: string = DEFAULT_REGION,
+  lookbackDays = DEFAULT_LOOKBACK_DAYS
+): Promise<StreamingRelease[]> {
+  const providers = await resolveProviders(region);
 
-  return feed.calendar
-    .filter((entry) => entry.date && new Date(entry.date) >= startOfToday)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, limit)
-    .map((entry) => ({
-      movie: toMovie(entry.simkl_id, feed.metadata?.[String(entry.simkl_id)]),
-      releaseDate: entry.date,
-    }))
-    .filter((r) => r.movie.title !== "");
+  const now = new Date();
+  const from = new Date(now);
+  from.setUTCDate(from.getUTCDate() - lookbackDays);
+
+  // Discover pages hold 20; pull enough that the availability filter below
+  // still leaves a full grid, capped so a wide `limit` can't run away.
+  const pagesNeeded = Math.min(5, Math.ceil(limit / 20) + 1);
+
+  const dateFrom = toDateString(from);
+  const dateTo = toDateString(now);
+
+  const seen = new Set<number>();
+  const candidates: Candidate[] = [];
+
+  for (let page = 1; page <= pagesNeeded; page++) {
+    const body = await discoverStreamingMovies({
+      providerIds: providers.map((p) => p.id),
+      region,
+      releasedFrom: dateFrom,
+      releasedTo: dateTo,
+      page,
+    });
+
+    for (const result of body.results ?? []) {
+      if (seen.has(result.id) || !result.title || !result.release_date) continue;
+      seen.add(result.id);
+      candidates.push({ movie: toMovie(result), releaseDate: result.release_date });
+    }
+
+    if (page >= body.total_pages) break;
+  }
+
+  const releases = await attachAvailability(candidates, providers, region);
+
+  return releases
+    .sort((a, b) => b.releaseDate.localeCompare(a.releaseDate))
+    .slice(0, limit);
 }
