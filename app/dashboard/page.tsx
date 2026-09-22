@@ -1369,6 +1369,13 @@ function DashboardInner() {
                   displayStatusLabel = `Caught up · Next episode ${dateStr} at ${timeStr}`;
                 }
 
+                // Simkl-style red count badge on the poster replaces the
+                // "N unwatched episodes" text pill.
+                const unwatchedBadgeCount =
+                  trackingStatus === "behind" && isEnriched && progress
+                    ? progress.unwatchedCount
+                    : 0;
+
                 return (
                   <div
                     key={ids.simkl || index}
@@ -1386,6 +1393,15 @@ function DashboardInner() {
                         />
                       ) : (
                         <div className="poster-placeholder" aria-hidden>📺</div>
+                      )}
+                      {unwatchedBadgeCount > 0 && (
+                        <span
+                          className="unwatched-count-badge"
+                          title={statusLabel}
+                          aria-label={statusLabel}
+                        >
+                          {unwatchedBadgeCount > 99 ? "99+" : unwatchedBadgeCount}
+                        </span>
                       )}
                     </div>
 
@@ -1407,9 +1423,11 @@ function DashboardInner() {
                           <span className="watchlist-card-year">{show.year}</span>
                         )}
                       </div>
-                      <span className={`tracking-status-badge status-${trackingStatus}`}>
-                        {displayStatusLabel}
-                      </span>
+                      {unwatchedBadgeCount === 0 && (
+                        <span className={`tracking-status-badge status-${trackingStatus}`}>
+                          {displayStatusLabel}
+                        </span>
+                      )}
                     </div>
 
                     {show.overview && (
