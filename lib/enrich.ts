@@ -218,11 +218,10 @@ export async function enrichListItem(
   // Simkl already gives us library-wide counts; trust them over recomputing,
   // since they account for specials and cross-mapped anime numbering.
   const completed = item.watched_episodes_count ?? 0;
-  const aired = Math.max(
+  const libraryAired = Math.max(
     0,
     (item.total_episodes_count ?? 0) - (item.not_aired_episodes_count ?? 0)
   );
-  const unwatchedCount = Math.max(0, aired - completed);
 
   // Watched map: "season-episode" -> true.
   //
@@ -259,6 +258,16 @@ export async function enrichListItem(
     };
   });
 
+  // The library row is a snapshot from the last sync that touched this show,
+  // and the activities gate only moves on *user* activity — so when new
+  // episodes air on a show the user is caught up on, the row's counts stay
+  // frozen. The episode list is refetched daily, so take whichever is larger.
+  const aired = Math.max(
+    libraryAired,
+    seasons.reduce((sum, s) => sum + s.aired, 0)
+  );
+  const unwatchedCount = Math.max(0, aired - completed);
+
   // The currently-releasing season: the highest season that has started airing
   // but still has unaired episodes scheduled.
   let upcomingInSeason: { season: number; remaining: number } | null = null;
@@ -278,10 +287,30 @@ export async function enrichListItem(
   // Next episode to watch: prefer the rich next_to_watch_info (only populated
   // for `watching` items), then fall back to parsing the compact code.
   const nextInfo = item.next_to_watch_info ?? null;
+  const lastCoords = parseEpisodeCode(item.last_watched);
   const nextCoords =
     nextInfo != null
       ? { season: nextInfo.season, episode: nextInfo.episode }
-      : parseEpisodeCode(item.next_to_watch);
+      : parseEpisodeCode(item.next_to_watch) ??
+        (unwatchedCount > 0 ? firstUnwatchedAired() : null);
+
+  // Same staleness as above: a caught-up show's snapshot has no
+  // next_to_watch, so derive it from the episode list — the first aired,
+  // unwatched episode after the last one watched, else the earliest.
+  function firstUnwatchedAired(): { season: number; episode: number } | null {
+    const candidates = realEpisodes
+      .filter((e) => e.aired && !watchedEpisodes[`${e.season}-${e.episode}`])
+      .sort((a, b) => a.season - b.season || a.episode - b.episode);
+    const afterLast = lastCoords
+      ? candidates.find(
+          (e) =>
+            e.season > lastCoords.season ||
+            (e.season === lastCoords.season && e.episode > lastCoords.episode)
+        )
+      : undefined;
+    const pick = afterLast ?? candidates[0];
+    return pick ? { season: pick.season, episode: pick.episode } : null;
+  }
 
   const nextEpisode = nextCoords
     ? toEpisodeInfo(
@@ -295,7 +324,6 @@ export async function enrichListItem(
       )
     : null;
 
-  const lastCoords = parseEpisodeCode(item.last_watched);
   const lastEpisode = lastCoords
     ? toEpisodeInfo(
         simklId,
