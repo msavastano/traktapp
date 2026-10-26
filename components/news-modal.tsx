@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  GEMINI_KEY_HEADER,
+  AI_KEY_HEADER,
   MISSING_KEY_ERROR,
-  getStoredGeminiKey,
-} from "@/lib/gemini-key";
-import { GeminiKeyModal } from "./gemini-key-modal";
+  getStoredAiKey,
+} from "@/lib/ai-key";
+import { ApiKeyModal } from "./api-key-modal";
 
 interface NewsSource {
   uri: string;
@@ -69,7 +69,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
   }, [onClose]);
 
   const fetchNews = (force = false) => {
-    const apiKey = getStoredGeminiKey();
+    const apiKey = getStoredAiKey();
     if (!apiKey) {
       setLoading(false);
       setError(null);
@@ -84,7 +84,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
     if (showYear) params.set("year", String(showYear));
     if (force) params.set("refresh", "1");
     fetch(`/api/news?${params.toString()}`, {
-      headers: { [GEMINI_KEY_HEADER]: apiKey },
+      headers: { [AI_KEY_HEADER]: apiKey },
     })
       .then(async (res) => {
         const json: NewsResponse = await res.json();
@@ -96,8 +96,8 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
           if (res.status === 429) {
             const delay = json.retryAfterMs ?? 0;
             // Only auto-retry when the server says it's worth it (short
-            // per-minute delay). Daily caps / grounding-disabled => just show
-            // the reason; a 30s retry would be pointless.
+            // delay from retry-after). Otherwise just show
+            // the reason; a blind retry would be pointless.
             if (json.retryable && delay > 0 && !autoRetried.current) {
               autoRetried.current = true;
               const sec = Math.ceil(delay / 1000);
@@ -167,7 +167,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
           {needsKey && !loading && (
             <div className="news-dialog-error">
               <p>
-                The latest-news search uses your own free Gemini API key. Add one
+                The latest-news search uses your own Anthropic API key. Add one
                 to continue.
               </p>
               <button
@@ -244,7 +244,7 @@ export function NewsModal({ open, showTitle, showYear, onClose }: Props) {
         </div>
       </div>
 
-      <GeminiKeyModal
+      <ApiKeyModal
         open={keyModalOpen}
         onClose={() => setKeyModalOpen(false)}
         onSaved={() => fetchNews(false)}

@@ -175,7 +175,7 @@ matchers in `STREAMING_SERVICES` are anchored to avoid two specific traps:
 | `SIMKL_REDIRECT_URI` | **Renamed** from `NEXT_PUBLIC_TRAKT_REDIRECT_URI`. Dropping the prefix makes it a runtime var so it no longer leaks into the client bundle — it must be re-added under the new name in Vercel. |
 | `TOKEN_ENCRYPTION_KEY` | Unchanged, still valid. 64 hex chars. |
 | `REDIS_URL` | Added by the Vercel Redis integration (Production, Preview, Development). TCP `redis://` connection string. |
-| `GEMINI_API_KEY` | Unchanged. |
+| `GEMINI_API_KEY` | **Removed.** AI features (recommendations, show news) now run on Claude Haiku 5.5 (`claude-haiku-5-5`, set in `lib/ai.ts`) using each user's own Anthropic API key, entered in the browser and sent per request in the `x-anthropic-key` header. No server env var is needed. |
 | `TMDB_API_KEY` | **New.** Free, self-serve from <https://www.themoviedb.org/settings/api>. Powers the "New on Streaming" tab only — the rest of the app is unaffected if it is missing (that one route 500s). Server-only: no `NEXT_PUBLIC_` prefix, so it stays out of the client bundle. Must be added to `.env.local` and to Vercel. |
 
 `.env.local.bak` holds the pre-migration file. Note `.env.local` contains a

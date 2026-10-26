@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  getStoredGeminiKey,
-  setStoredGeminiKey,
-  clearStoredGeminiKey,
-} from "@/lib/gemini-key";
+  getStoredAiKey,
+  setStoredAiKey,
+  clearStoredAiKey,
+} from "@/lib/ai-key";
 
 interface Props {
   open: boolean;
@@ -14,9 +14,9 @@ interface Props {
   onSaved?: () => void;
 }
 
-const AI_STUDIO_URL = "https://aistudio.google.com/app/apikey";
+const CONSOLE_KEYS_URL = "https://platform.claude.com/settings/keys";
 
-export function GeminiKeyModal({ open, onClose, onSaved }: Props) {
+export function ApiKeyModal({ open, onClose, onSaved }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [value, setValue] = useState("");
   const [reveal, setReveal] = useState(false);
@@ -32,7 +32,7 @@ export function GeminiKeyModal({ open, onClose, onSaved }: Props) {
   // Load any existing key when the modal opens.
   useEffect(() => {
     if (!open) return;
-    const existing = getStoredGeminiKey();
+    const existing = getStoredAiKey();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(existing ?? "");
     setHasExisting(existing !== null);
@@ -60,14 +60,14 @@ export function GeminiKeyModal({ open, onClose, onSaved }: Props) {
   const handleSave = () => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    setStoredGeminiKey(trimmed);
+    setStoredAiKey(trimmed);
     setHasExisting(true);
     onSaved?.();
     onClose();
   };
 
   const handleClear = () => {
-    clearStoredGeminiKey();
+    clearStoredAiKey();
     setValue("");
     setHasExisting(false);
   };
@@ -78,7 +78,7 @@ export function GeminiKeyModal({ open, onClose, onSaved }: Props) {
         <div className="news-dialog-header">
           <div>
             <div className="news-dialog-eyebrow">AI features</div>
-            <h3 className="news-dialog-title">Your Gemini API key</h3>
+            <h3 className="news-dialog-title">Your Anthropic API key</h3>
           </div>
           <button
             type="button"
@@ -91,55 +91,56 @@ export function GeminiKeyModal({ open, onClose, onSaved }: Props) {
         </div>
 
         <div className="news-dialog-content">
-          <p className="gemini-key-intro">
+          <p className="api-key-intro">
             AI recommendations and the &ldquo;Latest news&rdquo; search are powered by
-            Google&apos;s Gemini models. To use them, paste your own free Gemini API
-            key below. The app sends it straight to Google on your behalf — it is
-            never billed to or shared with anyone else.
+            Anthropic&apos;s Claude Haiku 5.5 model. To use them, paste your own
+            Anthropic API key below. The app sends it straight to Anthropic on your
+            behalf, and usage is billed to your own Anthropic account.
           </p>
 
-          <ol className="gemini-key-steps">
+          <ol className="api-key-steps">
             <li>
-              Open{" "}
-              <a href={AI_STUDIO_URL} target="_blank" rel="noopener noreferrer">
-                Google AI Studio
+              Open the{" "}
+              <a href={CONSOLE_KEYS_URL} target="_blank" rel="noopener noreferrer">
+                Claude Console
               </a>{" "}
-              and sign in with your Google account.
+              and sign in (or create an account).
             </li>
             <li>
-              Click <strong>Create API key</strong> (you may need to pick or create a
-              Google Cloud project — the default is fine).
+              Add credits under <strong>Billing</strong> if you haven&apos;t already,
+              then click <strong>Create key</strong>.
             </li>
             <li>Copy the key it generates and paste it here.</li>
           </ol>
 
-          <div className="gemini-key-warning" role="note">
-            <strong>Keep this key private.</strong> It grants access to your Google
-            AI Studio quota. We store it only in this browser&apos;s local storage on
-            your device and send it directly to Google with each AI request — we
-            never save it on our servers. Anyone with the key could use your quota,
-            so don&apos;t share it. The free tier has usage limits; heavy use may
-            require billing on your Google account. You can delete the key here at
-            any time, or revoke it in AI Studio.
+          <div className="api-key-warning" role="note">
+            <strong>Keep this key private.</strong> It can spend credits on your
+            Anthropic account. We store it only in this browser&apos;s local storage
+            on your device and send it directly to Anthropic with each AI request —
+            we never save it on our servers. Anyone with the key could use your
+            credits, so don&apos;t share it. Haiku 5.5 is inexpensive, but the
+            &ldquo;Latest news&rdquo; search also uses Claude&apos;s web search tool,
+            which is billed per search. You can delete the key here at any time, or
+            revoke it in the Console.
           </div>
 
-          <label className="gemini-key-label" htmlFor="gemini-key-input">
-            Gemini API key
+          <label className="api-key-label" htmlFor="api-key-input">
+            Anthropic API key
           </label>
-          <div className="gemini-key-input-row">
+          <div className="api-key-input-row">
             <input
-              id="gemini-key-input"
-              className="gemini-key-input"
+              id="api-key-input"
+              className="api-key-input"
               type={reveal ? "text" : "password"}
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              placeholder="AIza…"
+              placeholder="sk-ant-…"
               autoComplete="off"
               spellCheck={false}
             />
             <button
               type="button"
-              className="gemini-key-reveal"
+              className="api-key-reveal"
               onClick={() => setReveal((r) => !r)}
               aria-label={reveal ? "Hide key" : "Show key"}
             >
@@ -147,7 +148,7 @@ export function GeminiKeyModal({ open, onClose, onSaved }: Props) {
             </button>
           </div>
 
-          <div className="gemini-key-actions">
+          <div className="api-key-actions">
             <button
               type="button"
               className="confirm-dialog-btn confirm-dialog-confirm"

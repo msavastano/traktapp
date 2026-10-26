@@ -2081,14 +2081,14 @@ select {
   border: 1px solid rgba(61, 92, 62, 0.2);
 }
 
-/* Gemini API key modal */
-.gemini-key-intro {
+/* Anthropic API key modal */
+.api-key-intro {
   font-size: 14px;
   line-height: 1.6;
   color: var(--on-surface-variant, inherit);
 }
 
-.gemini-key-steps {
+.api-key-steps {
   margin: 0;
   padding-left: 1.2rem;
   display: flex;
@@ -2098,12 +2098,12 @@ select {
   line-height: 1.5;
 }
 
-.gemini-key-steps a {
+.api-key-steps a {
   color: var(--accent, #3b82f6);
   text-decoration: underline;
 }
 
-.gemini-key-warning {
+.api-key-warning {
   font-size: 13px;
   line-height: 1.6;
   padding: var(--space-3, 12px);
@@ -2112,18 +2112,18 @@ select {
   border: 1px solid var(--border-light);
 }
 
-.gemini-key-label {
+.api-key-label {
   font-size: 13px;
   font-weight: 600;
   margin-top: var(--space-2, 8px);
 }
 
-.gemini-key-input-row {
+.api-key-input-row {
   display: flex;
   gap: var(--space-2, 8px);
 }
 
-.gemini-key-input {
+.api-key-input {
   flex: 1;
   padding: 10px 12px;
   border-radius: var(--radius-md, 8px);
@@ -2134,12 +2134,12 @@ select {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.gemini-key-input:focus {
+.api-key-input:focus {
   outline: none;
   border-color: var(--accent, #3b82f6);
 }
 
-.gemini-key-reveal {
+.api-key-reveal {
   padding: 0 14px;
   border-radius: var(--radius-md, 8px);
   border: 1px solid var(--border-light);
@@ -2149,7 +2149,7 @@ select {
   cursor: pointer;
 }
 
-.gemini-key-actions {
+.api-key-actions {
   display: flex;
   gap: var(--space-3, 12px);
   margin-top: var(--space-2, 8px);

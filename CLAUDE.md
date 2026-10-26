@@ -59,6 +59,16 @@ When changing status semantics, update **both** the `TrackingStatus` union in `l
 
 `POST /api/history` with `{ episodeId }` posts to Trakt's `sync/history`. The dashboard calls this then re-fetches `/api/watchlist` to get updated progress (no optimistic updates).
 
+### AI features
+
+Recommendations (`/api/recommendations`) and show news (`/api/news`) call Claude
+via `@anthropic-ai/sdk` in `lib/ai.ts`. The model is set once there as `MODEL`
+(currently `claude-haiku-5-5`). Keys are bring-your-own: users paste an
+Anthropic API key into `components/api-key-modal.tsx`, it is stored in
+localStorage (`lib/ai-key.ts`) and forwarded per request in the
+`x-anthropic-key` header; nothing is stored server-side. News uses Claude's
+`web_search` server tool.
+
 ## ⚠️ Migration in progress: Trakt → Simkl
 
 This project is mid-migration from the Trakt API to Simkl. **The architecture
