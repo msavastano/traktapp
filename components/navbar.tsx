@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { UserProfile } from "./user-profile";
 import { ThemeToggle } from "./theme-toggle";
-import { GeminiKeyModal } from "./gemini-key-modal";
+import { ApiKeyModal } from "./api-key-modal";
 import Link from "next/link";
 
 export function Navbar() {
@@ -23,8 +23,8 @@ export function Navbar() {
           <button
             type="button"
             className="theme-toggle-btn"
-            aria-label="Manage Gemini API key"
-            title="Gemini API key"
+            aria-label="Manage Anthropic API key"
+            title="Anthropic API key"
             onClick={() => setKeyModalOpen(true)}
           >
             🔑
@@ -34,7 +34,7 @@ export function Navbar() {
         {!isLoading && isAuthenticated && <UserProfile />}
       </div>
 
-      <GeminiKeyModal open={keyModalOpen} onClose={() => setKeyModalOpen(false)} />
+      <ApiKeyModal open={keyModalOpen} onClose={() => setKeyModalOpen(false)} />
     </nav>
   );
 }

@@ -1,10 +1,10 @@
-import { ShowNews } from "@/lib/gemini";
+import { ShowNews } from "@/lib/ai";
 
 // Durable cache for generated show news. Backed by Upstash Redis (REST) when
 // UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN are set; otherwise falls
 // back to a process-local Map (fine for local dev, lost on serverless cold
 // starts). Keeping news cached across cold starts is what stops every restart
-// from re-spending the free-tier Gemini search quota.
+// from re-spending paid Claude web searches.
 
 export interface CachedNews {
   generatedAt: number;

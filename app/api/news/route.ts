@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { generateShowNews, RateLimitError } from "@/lib/gemini";
-import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
+import { generateShowNews, RateLimitError } from "@/lib/ai";
+import { AI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/ai-key";
 import { getCachedNews, setCachedNews, newsCacheKey } from "@/lib/news-cache";
 
 export async function GET(req: NextRequest) {
   // Login is required to reach this, but no Simkl call is made here — the
-  // session is only used as a gate on the user's own Gemini key.
+  // session is only used as a gate on the user's own Anthropic key.
   const session = await getSession();
   if (!session.ok) return session.response;
 
-  const geminiKey = req.headers.get(GEMINI_KEY_HEADER)?.trim();
-  if (!geminiKey) {
+  const apiKey = req.headers.get(AI_KEY_HEADER)?.trim();
+  if (!apiKey) {
     return NextResponse.json(
-      { error: MISSING_KEY_ERROR, detail: "Add your Gemini API key to fetch the latest news." },
+      { error: MISSING_KEY_ERROR, detail: "Add your Anthropic API key to fetch the latest news." },
       { status: 400 }
     );
   }
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await generateShowNews(geminiKey, title, normalizedYear);
+    const result = await generateShowNews(apiKey, title, normalizedYear);
     await setCachedNews(key, { generatedAt: Date.now(), result });
     return NextResponse.json({
       ...result,
@@ -56,12 +56,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         {
           error: error.message,
-          detail:
-            error.scope === "per-day"
-              ? "Daily quota — resets at midnight Pacific."
-              : error.retryable
-                ? `Retry in ~${retryAfterSec}s.`
-                : "Web search grounding likely needs billing enabled on the key.",
+          detail: error.retryable
+            ? `Retry in ~${retryAfterSec}s.`
+            : "Check your Anthropic account's rate limits and credit balance.",
           scope: error.scope,
           quotaId: error.quotaId,
           retryable: error.retryable,

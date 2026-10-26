@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchSimkl, apiUrl, baseHeaders, normalizeShow } from "@/lib/simkl";
 import { getSession } from "@/lib/session";
 import { syncLibrary } from "@/lib/sync";
-import { generateRecommendations, TasteShow, GeminiRecommendation } from "@/lib/gemini";
-import { GEMINI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/gemini-key";
+import { generateRecommendations, TasteShow, AiRecommendation } from "@/lib/ai";
+import { AI_KEY_HEADER, MISSING_KEY_ERROR } from "@/lib/ai-key";
 import type { SimklShow } from "@/lib/types";
 
-export interface RecommendationCard extends GeminiRecommendation {
+export interface RecommendationCard extends AiRecommendation {
   show: SimklShow | null;
 }
 
@@ -23,10 +23,10 @@ export async function GET(req: NextRequest) {
   if (!session.ok) return session.response;
   const { tokens } = session;
 
-  const geminiKey = req.headers.get(GEMINI_KEY_HEADER)?.trim();
-  if (!geminiKey) {
+  const apiKey = req.headers.get(AI_KEY_HEADER)?.trim();
+  if (!apiKey) {
     return NextResponse.json(
-      { error: MISSING_KEY_ERROR, detail: "Add your Gemini API key to get AI recommendations." },
+      { error: MISSING_KEY_ERROR, detail: "Add your Anthropic API key to get AI recommendations." },
       { status: 400 }
     );
   }
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const recs = await generateRecommendations(geminiKey, taste, 12);
+    const recs = await generateRecommendations(apiKey, taste, 12);
 
     // Enrich each rec with Simkl show data (poster, ids, etc.)
     const excludedTitles = new Set(taste.map((t) => t.title.toLowerCase()));

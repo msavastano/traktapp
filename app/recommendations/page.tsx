@@ -8,11 +8,11 @@ import Link from "next/link";
 import type { SimklShow } from "@/lib/types";
 import { posterFrom, simklShowUrl } from "@/lib/images";
 import {
-  GEMINI_KEY_HEADER,
+  AI_KEY_HEADER,
   MISSING_KEY_ERROR,
-  getStoredGeminiKey,
-} from "@/lib/gemini-key";
-import { GeminiKeyModal } from "@/components/gemini-key-modal";
+  getStoredAiKey,
+} from "@/lib/ai-key";
+import { ApiKeyModal } from "@/components/api-key-modal";
 
 interface RecommendationCard {
   title: string;
@@ -45,7 +45,7 @@ export default function RecommendationsPage() {
   const [needsKey, setNeedsKey] = useState(false);
 
   const fetchRecs = (refresh = false) => {
-    const apiKey = getStoredGeminiKey();
+    const apiKey = getStoredAiKey();
     if (!apiKey) {
       setLoading(false);
       setNeedsKey(true);
@@ -56,7 +56,7 @@ export default function RecommendationsPage() {
     setLoading(true);
     setError(null);
     fetch(`/api/recommendations${refresh ? "?refresh=1" : ""}`, {
-      headers: { [GEMINI_KEY_HEADER]: apiKey },
+      headers: { [AI_KEY_HEADER]: apiKey },
     })
       .then(async (res) => {
         const json = (await res.json()) as RecResponse;
@@ -121,7 +121,7 @@ export default function RecommendationsPage() {
             <span className="dashboard-greeting-accent">AI</span> Recommendations
           </h1>
           <p className="dashboard-subtitle">
-            Picked for you by Gemini based on your watch history and watchlist.
+            Picked for you by Claude based on your watch history and watchlist.
           </p>
           <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
             <Link href="/dashboard" className="mark-watched-btn">
@@ -146,9 +146,9 @@ export default function RecommendationsPage() {
           {needsKey ? (
             <div className="coming-soon">
               <div className="coming-soon-icon">🔑</div>
-              <h3 className="coming-soon-title">Add your Gemini API key</h3>
+              <h3 className="coming-soon-title">Add your Anthropic API key</h3>
               <p className="coming-soon-desc">
-                AI recommendations run on your own free Gemini API key. Add one to
+                AI recommendations run on your own Anthropic API key. Add one to
                 get started.
               </p>
               <button
@@ -162,7 +162,7 @@ export default function RecommendationsPage() {
           ) : loading ? (
             <div className="watchlist-loading">
               <div className="loading-spinner" />
-              <p className="loading-text">Asking Gemini for picks…</p>
+              <p className="loading-text">Asking Claude for picks…</p>
             </div>
           ) : error ? (
             <div className="coming-soon">
@@ -214,7 +214,7 @@ export default function RecommendationsPage() {
                       <div className="watchlist-card-header">
                         <div className="watchlist-card-title-row">
                           <h3 className="watchlist-card-title">
-                            {/* Only linkable once the Gemini pick has been
+                            {/* Only linkable once the AI pick has been
                                 resolved to a real Simkl show. */}
                             {show?.ids?.simkl ? (
                               <a
@@ -294,7 +294,7 @@ export default function RecommendationsPage() {
         </section>
       </div>
 
-      <GeminiKeyModal
+      <ApiKeyModal
         open={keyModalOpen}
         onClose={() => setKeyModalOpen(false)}
         onSaved={() => fetchRecs(false)}
